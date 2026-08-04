@@ -1,0 +1,32 @@
+# Python virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment variables
+.env
+.env.*
+
+# Logs
+logs/
+*.log
+
+# pytest cache
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Node
+frontend/node_modules/
+frontend/dist/
