@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 
 class InstallationStep(BaseModel):
     step_number: int
@@ -17,6 +17,9 @@ class InstallationSession(BaseModel):
     percentage: int
     logs: List[str]
     estimated_time: str
+    
+    class Config:
+        from_attributes = True
 
 class InstallationStatusResponse(BaseModel):
     step: str
@@ -25,3 +28,4 @@ class InstallationStatusResponse(BaseModel):
     message: str
     logs: List[str]
     estimated_time: str
+    device_readiness: Optional[dict] = None

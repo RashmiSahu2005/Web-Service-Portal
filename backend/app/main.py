@@ -24,9 +24,15 @@ app.include_router(applications.router, tags=["applications"])
 app.include_router(installation.router, tags=["installation"])
 app.include_router(admin.router, tags=["admin"])
 
+from app.database.database import Base, engine
+from app.database import models
+
 @app.on_event("startup")
 async def startup_event():
     logger.info("Application Hub MVP backend started.")
+    # Create SQLite tables
+    Base.metadata.create_all(bind=engine)
+    logger.info("Database tables initialized.")
 
 @app.get("/")
 def read_root():
