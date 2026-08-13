@@ -1,0 +1,55 @@
+graph TD
+    Start[Start Script Generation Node] --> OSDetectionCheck{OS Type}
+    
+    OSDetectionCheck -->|Windows| WinAttemptCheck{Current Attempt?}
+    OSDetectionCheck -->|Linux/macOS| LinAttemptCheck{Current Attempt?}
+    
+    WinAttemptCheck -->|Attempt 1 or 2| PS1[Generate PowerShell .ps1]
+    WinAttemptCheck -->|Attempt 3| PyWin[Generate Python .py]
+    
+    LinAttemptCheck -->|Attempt 1 or 2| PyLin[Generate Python .py]
+    LinAttemptCheck -->|Attempt 3| Bash[Generate Bash .sh]
+    
+    PS1 --> LLM[LLMService Generation]
+    PyWin --> LLM
+    PyLin --> LLM
+    Bash --> LLM
+    
+    LLM --> Validation{Validation}
+    Validation -->|Secrets detected or syntax error| RetryLLM{Retry allowed?}
+    RetryLLM -->|Yes| LLM
+    RetryLLM -->|No| FailScript[Mark FAILED]
+    
+    Validation -->|Success| RiskAnalysis[Risk Analysis Node]
+    
+    RiskAnalysis --> RiskCheck{Risk Score}
+    RiskCheck -->|HIGH| Blocked[BLOCKED_HIGH_RISK]
+    RiskCheck -->|LOW/MEDIUM| FleetExecution[Fleet Execution Node]
+    
+    FleetExecution --> Upload[Upload Script to FleetDM]
+    Upload --> Run[Execute Script via FleetDM API]
+    Run --> ExecID[Get Execution ID]
+    
+    ExecID --> Monitoring[Monitoring Node]
+    Monitoring --> Poll[Poll FleetDM Execution Status]
+    
+    Poll --> ExitCode{Exit Code?}
+    ExitCode -->|0| Success[Mark COMPLETED]
+    ExitCode -->|!= 0 or Timeout| FailExecution[Mark FAILED]
+    
+    Success --> Cleanup[Installation Script Cleanup Node]
+    FailExecution --> Cleanup
+    Blocked --> Cleanup
+    FailScript --> Cleanup
+    
+    Cleanup --> DeleteScript[Delete FleetDM Script]
+    DeleteScript --> ScriptFailureAnalysis[Script Failure Analysis Node]
+    
+    ScriptFailureAnalysis --> CheckStatus{Status?}
+    CheckStatus -->|FAILED| RetryCheck{Max Retries Exceeded?}
+    CheckStatus -->|COMPLETED| Verif[Verification Flow]
+    
+    RetryCheck -->|No| TriggerRegen[Trigger Regeneration]
+    TriggerRegen --> Start
+    
+    RetryCheck -->|Yes| Notification[Notification Node]

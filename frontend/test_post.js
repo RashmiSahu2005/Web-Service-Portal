@@ -16,7 +16,7 @@ const payload = {
     status: 'ACTIVE'
 };
 
-axios.post('http://localhost:8000/admin/applications', payload)
+axios.post('http://192.168.10.83:8000/admin/applications', payload)
     .then(res => console.log("Success:", res.data))
     .catch(err => {
         console.error("Error:", err.response ? err.response.data : err.message);

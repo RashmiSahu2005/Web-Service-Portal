@@ -33,6 +33,13 @@ async def startup_event():
     # Create SQLite tables
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables initialized.")
+    
+    # Log configuration mode
+    logger.info(f"[CONFIG] USE_FLEETDM={str(settings.USE_FLEETDM).lower()}")
+    if settings.USE_FLEETDM:
+        logger.info("[CONFIG] Agentic installation mode: REAL FLEETDM")
+    else:
+        logger.info("[CONFIG] Agentic installation mode: LEGACY SIMULATION")
 
 @app.get("/")
 def read_root():

@@ -8,17 +8,12 @@ const AddApplicationModal = ({ isOpen, onClose, onSuccess, mode = 'add', initial
     version: '',
     category: '',
     description: '',
-    package_name: '',
-    package_path: '',
-    installer_type: '',
-    install_command: '',
+    fleet_script_id: '',
     minimum_battery_percentage: 30,
     retry_limit: 3,
     email_notification: true,
     auto_remediation: true,
   });
-
-  const [uploadStatus, setUploadStatus] = useState('idle'); // idle, uploading, done
 
   useEffect(() => {
     if (isOpen) {
@@ -32,16 +27,12 @@ const AddApplicationModal = ({ isOpen, onClose, onSuccess, mode = 'add', initial
           package_path: initialData.package_path || '',
           installer_type: initialData.installer_type || '',
           install_command: initialData.install_command || '',
+          fleet_script_id: initialData.fleet_script_id || '',
           minimum_battery_percentage: initialData.minimum_battery_percentage ?? 30,
           retry_limit: initialData.retry_limit ?? 3,
           email_notification: initialData.email_notification ?? true,
           auto_remediation: initialData.auto_remediation ?? true,
         });
-        if (initialData.package_name) {
-          setUploadStatus('done');
-        } else {
-          setUploadStatus('idle');
-        }
       } else {
         setFormData({
           name: '',
@@ -52,12 +43,12 @@ const AddApplicationModal = ({ isOpen, onClose, onSuccess, mode = 'add', initial
           package_path: '',
           installer_type: '',
           install_command: '',
+          fleet_script_id: '',
           minimum_battery_percentage: 30,
           retry_limit: 3,
           email_notification: true,
           auto_remediation: true,
         });
-        setUploadStatus('idle');
       }
     }
   }, [isOpen, mode, initialData]);
@@ -74,57 +65,28 @@ const AddApplicationModal = ({ isOpen, onClose, onSuccess, mode = 'add', initial
     }));
   };
 
-  const handleFileDrop = (e) => {
-    e.preventDefault();
-    const file = e.dataTransfer ? e.dataTransfer.files[0] : e.target.files[0];
-    if (!file) return;
-
-    setUploadStatus('uploading');
-    
-    // Simulate upload delay
-    setTimeout(() => {
-      const fileName = file.name;
-      let installerType = 'unknown';
-      let command = '';
-
-      if (fileName.endsWith('.deb')) {
-        installerType = 'deb';
-        command = 'sudo dpkg -i {package}';
-      } else if (fileName.endsWith('.rpm')) {
-        installerType = 'rpm';
-        command = 'sudo rpm -ivh {package}';
-      } else if (fileName.endsWith('.AppImage')) {
-        installerType = 'AppImage';
-        command = 'chmod +x {package} && ./{package}';
-      } else if (fileName.endsWith('.sh')) {
-        installerType = 'sh';
-        command = 'chmod +x {package} && ./{package}';
-      } else if (fileName.endsWith('.tar.gz')) {
-        installerType = 'tar.gz';
-        command = 'tar -xzf {package}';
-      }
-
-      setFormData(prev => ({
-        ...prev,
-        package_name: fileName,
-        package_path: `repository/${prev.name.toLowerCase().replace(/\\s+/g, '') || 'app'}/${fileName}`,
-        installer_type: installerType !== 'unknown' ? installerType : prev.installer_type,
-        install_command: command || prev.install_command,
-      }));
-      
-      setUploadStatus('done');
-    }, 1500);
+  const handleImageUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setFormData(prev => ({ ...prev, package_path: reader.result }));
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const handleSave = async () => {
-    // Validate required fields
-    if (!formData.name || !formData.version || !formData.category) {
-      alert('Please fill out all required fields: Name, Version, Category.');
+    if (!formData.name || !formData.category) {
+      alert('Please fill out all required fields: Name, Category.');
       return;
     }
-    if (!formData.package_name) {
-      alert('Please upload a package first.');
-      return;
+    
+    if (formData.fleet_script_id) {
+      if (!/^\d+$/.test(String(formData.fleet_script_id))) {
+        alert('Fleet Script ID must be a positive integer.');
+        return;
+      }
     }
 
     try {
@@ -173,17 +135,36 @@ const AddApplicationModal = ({ isOpen, onClose, onSuccess, mode = 'add', initial
           
           {/* Basic Info */}
           <div className="space-y-4">
-            <h4 className="text-sm font-bold text-gray-900 uppercase tracking-wider flex items-center">
-              <Settings className="w-4 h-4 mr-2 text-gray-400" /> Basic Information
-            </h4>
+            <div className="flex justify-between items-center">
+              <h4 className="text-sm font-bold text-gray-900 uppercase tracking-wider flex items-center">
+                <Settings className="w-4 h-4 mr-2 text-gray-400" /> Basic Information
+              </h4>
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded bg-gray-100 border border-gray-200 flex items-center justify-center overflow-hidden">
+                  {formData.package_path && formData.package_path.startsWith('data:image') ? (
+                    <img src={formData.package_path} alt="Icon" className="w-full h-full object-cover" />
+                  ) : (
+                    <span className="text-xs font-bold text-gray-600">
+                      {formData.name ? formData.name.substring(0,2).toUpperCase() : 'APP'}
+                    </span>
+                  )}
+                </div>
+                {!isReadOnly && (
+                  <label className="cursor-pointer px-3 py-1.5 bg-white border border-gray-200 hover:bg-gray-50 text-xs font-medium text-gray-700 rounded-lg transition-colors">
+                    Upload Icon
+                    <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} />
+                  </label>
+                )}
+              </div>
+            </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Application Name *</label>
                 <input readOnly={isReadOnly} required type="text" name="name" value={formData.name} onChange={handleChange} className={`w-full ${isReadOnly ? 'bg-gray-100' : 'bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#004aad]/20 focus:border-[#004aad]'} border border-gray-200 rounded-lg px-3 py-2 text-gray-900 outline-none transition-all`} placeholder="e.g. Visual Studio Code" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Version *</label>
-                <input readOnly={isReadOnly} required type="text" name="version" value={formData.version} onChange={handleChange} className={`w-full ${isReadOnly ? 'bg-gray-100' : 'bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#004aad]/20 focus:border-[#004aad]'} border border-gray-200 rounded-lg px-3 py-2 text-gray-900 outline-none transition-all`} placeholder="e.g. 1.85.1" />
+                <label className="block text-sm font-medium text-gray-700 mb-1">Version</label>
+                <input readOnly={isReadOnly} type="text" name="version" value={formData.version} onChange={handleChange} className={`w-full ${isReadOnly ? 'bg-gray-100' : 'bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#004aad]/20 focus:border-[#004aad]'} border border-gray-200 rounded-lg px-3 py-2 text-gray-900 outline-none transition-all`} placeholder="latest or e.g. 138.0.7204.92" />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Category *</label>
@@ -198,68 +179,16 @@ const AddApplicationModal = ({ isOpen, onClose, onSuccess, mode = 'add', initial
 
           <hr className="border-gray-100" />
 
-          {/* Package Upload */}
+          {/* FleetDM Settings */}
           <div className="space-y-4">
             <h4 className="text-sm font-bold text-gray-900 uppercase tracking-wider flex items-center">
-              <UploadCloud className="w-4 h-4 mr-2 text-gray-400" /> Package Upload
+              <HardDrive className="w-4 h-4 mr-2 text-gray-400" /> FleetDM Configuration
             </h4>
-            
-            {uploadStatus === 'idle' && (
-              <label 
-                onDragOver={isReadOnly ? undefined : (e) => e.preventDefault()} 
-                onDrop={isReadOnly ? undefined : handleFileDrop}
-                className={`flex flex-col items-center justify-center w-full h-32 border-2 ${isReadOnly ? 'border-gray-200 bg-gray-50' : 'border-dashed border-blue-200 bg-blue-50/50 hover:bg-blue-50 cursor-pointer'} rounded-xl transition-colors group`}
-              >
-                <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                  <UploadCloud className={`w-8 h-8 ${isReadOnly ? 'text-gray-400' : 'text-blue-400 group-hover:scale-110 transition-transform'} mb-2`} />
-                  <p className="mb-1 text-sm text-gray-600">
-                    {isReadOnly ? 'No package uploaded' : <><span className="font-semibold text-[#004aad]">Click to upload</span> or drag and drop</>}
-                  </p>
-                  {!isReadOnly && <p className="text-xs text-gray-500">.deb, .rpm, .AppImage, .tar.gz, .sh</p>}
-                </div>
-                {!isReadOnly && <input type="file" className="hidden" onChange={handleFileDrop} />}
-              </label>
-            )}
-
-            {uploadStatus === 'uploading' && (
-              <div className="w-full h-32 border border-gray-200 rounded-xl bg-gray-50 flex items-center justify-center">
-                 <div className="flex flex-col items-center">
-                   <div className="w-6 h-6 border-2 border-[#004aad] border-t-transparent rounded-full animate-spin mb-2"></div>
-                   <span className="text-sm text-gray-500 font-medium">Processing Package...</span>
-                 </div>
-              </div>
-            )}
-
-             {uploadStatus === 'done' && (
-              <div className="w-full p-4 border border-green-200 rounded-xl bg-green-50 flex items-start space-x-4">
-                 <div className="p-2 bg-green-100 rounded-lg">
-                   <File className="w-6 h-6 text-green-600" />
-                 </div>
-                 <div className="flex-1 min-w-0">
-                   <p className="text-sm font-bold text-gray-900 truncate">{formData.package_name}</p>
-                   <p className="text-xs text-gray-500 truncate mb-2">{formData.package_path}</p>
-                   <div className="flex space-x-4">
-                     <div className="flex flex-col">
-                       <span className="text-[10px] text-gray-400 uppercase font-bold">Auto-Detected Type</span>
-                       <span className="text-xs font-medium text-gray-700 bg-white px-2 py-0.5 rounded border border-gray-200 mt-1 inline-block w-max">{formData.installer_type}</span>
-                     </div>
-                   </div>
-                 </div>
-                 {!isReadOnly && (
-                   <button onClick={() => setUploadStatus('idle')} className="text-xs font-medium text-red-500 hover:text-red-700">Remove</button>
-                 )}
-              </div>
-            )}
-
-            {/* Config Fields */}
-            <div className="grid grid-cols-2 gap-4 pt-2">
+            <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Installer Type</label>
-                <input type="text" name="installer_type" value={formData.installer_type} onChange={handleChange} readOnly={isReadOnly || uploadStatus === 'done'} className={`w-full ${isReadOnly || uploadStatus === 'done' ? 'bg-gray-100 opacity-70' : 'bg-gray-50 focus:bg-white focus:border-[#004aad]'} border border-gray-200 rounded-lg px-3 py-2 text-gray-900 focus:ring-2 focus:ring-[#004aad]/20 outline-none transition-all`} placeholder="e.g. deb" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Install Command</label>
-                <input type="text" name="install_command" value={formData.install_command} onChange={handleChange} readOnly={isReadOnly} className={`w-full ${isReadOnly ? 'bg-gray-100' : 'bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#004aad]/20 focus:border-[#004aad]'} border border-gray-200 rounded-lg px-3 py-2 text-gray-900 outline-none transition-all font-mono text-sm`} placeholder="e.g. sudo dpkg -i {package}" />
+                <label className="block text-sm font-medium text-gray-700 mb-1">Fleet Script ID</label>
+                <input readOnly={isReadOnly} type="text" name="fleet_script_id" value={formData.fleet_script_id} onChange={handleChange} className={`w-full ${isReadOnly ? 'bg-gray-100' : 'bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#004aad]/20 focus:border-[#004aad]'} border border-gray-200 rounded-lg px-3 py-2 text-gray-900 outline-none transition-all`} placeholder="e.g. 161" />
+                <p className="text-xs text-gray-500 mt-1">Required if FleetDM is enabled.</p>
               </div>
             </div>
           </div>

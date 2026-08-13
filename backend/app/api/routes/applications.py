@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends
 from typing import List
+# pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Session
 from app.schemas.application import Application
 from app.services.application_service import ApplicationService

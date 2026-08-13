@@ -1,0 +1,29 @@
+graph TD
+    Main[app/main.py] -->|app.include_router| APIInst[app/api/routes/installation.py]
+    Main -->|app.include_router| APIApp[app/api/routes/applications.py]
+    Main -->|app.include_router| APIAdmin[app/api/routes/admin.py]
+    
+    APIInst -->|POST /install/start| Queue[QueueService.enqueue_installation]
+    APIInst -->|POST /hosts/identify| FleetService[FleetDMService.get_host_info]
+    
+    Queue -->|Celery Task| Worker[worker.py]
+    
+    Worker -->|create_installation_graph| Graph[app/graph/graph.py]
+    
+    Graph --> Node1[app/graph/nodes/validation.py]
+    Graph --> Node2[app/graph/nodes/host_discovery.py]
+    Graph --> Node3[app/graph/nodes/os_detection.py]
+    Graph --> Node4[app/graph/nodes/script_generation.py]
+    Graph --> Node5[app/graph/nodes/fleet_execution.py]
+    Graph --> Node6[app/graph/nodes/monitoring.py]
+    
+    Node4 -->|LLMService.generate| LLM[app/services/llm_service.py]
+    Node5 -->|FleetDMService.run_script| FleetService2[app/services/fleetdm_service.py]
+    Node6 -->|FleetDMService.get_script_result| FleetService2
+    
+    Graph --> Node7[app/graph/nodes/latest_version_discovery.py]
+    Node7 -->|TavilyService.get_version_evidence| Tavily[app/services/tavily_service.py]
+    Node7 -->|redis_service.get_latest_version| Redis[app/services/redis_service.py]
+    
+    Graph --> Node8[app/graph/nodes/notification.py]
+    Node8 -->|EmailService.send_installation_success/failure| Email[app/services/email_service.py]

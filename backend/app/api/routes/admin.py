@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List
+# pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Session
 from app.schemas.application import Application, ApplicationCreate
 from app.services.application_service import ApplicationService
@@ -16,10 +17,9 @@ def get_admin_applications(db: Session = Depends(get_db)):
 def create_admin_application(app_create: ApplicationCreate, db: Session = Depends(get_db)):
     import uuid
     
-    if settings.USE_FLEETDM and not app_create.fleet_script_id:
-        raise HTTPException(status_code=400, detail="Fleet Script ID is required when FleetDM is enabled.")
-        
     app_dict = app_create.model_dump()
+    if not app_dict.get("version") or not app_dict["version"].strip():
+        app_dict["version"] = "latest"
     
     new_app = Application(
         id=f"app_{str(uuid.uuid4())[:8]}",
@@ -40,11 +40,9 @@ def update_admin_application(app_id: str, app_update: ApplicationCreate, db: Ses
     existing_app = ApplicationService.get_application(db, app_id)
     if not existing_app:
         raise HTTPException(status_code=404, detail="Application not found")
-        
-    if settings.USE_FLEETDM and not app_update.fleet_script_id:
-        raise HTTPException(status_code=400, detail="Fleet Script ID is required when FleetDM is enabled.")
-    
     app_dict = app_update.model_dump()
+    if not app_dict.get("version") or not app_dict["version"].strip():
+        app_dict["version"] = "latest"
     updated_app = Application(
         id=app_id,
         **app_dict

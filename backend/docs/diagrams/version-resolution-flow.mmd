@@ -1,0 +1,34 @@
+graph TD
+    Input[Application State Check Node] --> VersionInput{Requested Version}
+    
+    VersionInput -->|Explicit Version| AvailCheck[VersionAvailabilityService]
+    VersionInput -->|"Latest" or Empty| RedisCheck[Redis Cache Lookup]
+    
+    AvailCheck -->|AVAILABLE| ExplicitSource[version_resolution_source = 'explicit']
+    AvailCheck -->|NOT_AVAILABLE| FallbackSource[version_resolution_source = 'latest_fallback']
+    AvailCheck -->|CHECK_FAILED| FailCheck[version_check_unavailable = True]
+    
+    FallbackSource --> RedisCheck
+    
+    RedisCheck -->|Cache Hit| UseCache[Use Cached latest_version]
+    RedisCheck -->|Cache Miss| Tavily[TavilyService Web Search]
+    
+    Tavily -->|Search Error| FailCheck
+    Tavily -->|Search Success| LLM[LLM Extraction]
+    
+    LLM -->|High Confidence| SaveCache[Save to Redis]
+    LLM -->|Low Confidence/Error| RegexFallback[Regex Extraction Fallback]
+    
+    RegexFallback -->|Success| SetLatest[discovered_latest_version set]
+    RegexFallback -->|Failure| FailCheck
+    
+    SaveCache --> SetLatest
+    UseCache --> SetLatest
+    
+    ExplicitSource --> VersionDecisionNode[Version Decision Node]
+    SetLatest --> VersionDecisionNode
+    FailCheck --> EndNode[Notification Node / Failure]
+    
+    VersionDecisionNode --> CheckInst{Is installed version >= target version?}
+    CheckInst -->|Yes| SkipInst[hosts_requiring_installation removed]
+    CheckInst -->|No| RequireInst[Proceed with Installation]
