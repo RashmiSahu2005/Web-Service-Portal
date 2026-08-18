@@ -40,6 +40,11 @@ async def startup_event():
         logger.info("[CONFIG] Agentic installation mode: REAL FLEETDM")
     else:
         logger.info("[CONFIG] Agentic installation mode: LEGACY SIMULATION")
+        
+    # Start Email Listener if enabled
+    if getattr(settings, 'ENABLE_IMAP_LISTENER', False):
+        from app.mail_listener.email_listener import start_polling
+        start_polling()
 
 @app.get("/")
 def read_root():

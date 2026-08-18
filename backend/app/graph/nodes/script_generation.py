@@ -104,7 +104,12 @@ REQUIREMENTS:
 6. Preserve the application's intended installation goal.
 7. Do not invent credentials, secrets, or unsupported dependencies.
 8. If the previous approach is incompatible with the target OS or execution context, use a different compatible approach.
+
+To assist you with accurate URLs and official repositories, here is live search data from the web regarding the official installation instructions for this application:
 """
+        from app.services.tavily_service import TavilyService
+        evidence = TavilyService.get_installation_evidence(state.get("application_name", "the application"), os_name)
+        prompt += f"\nWEB SEARCH EVIDENCE:\n{evidence}\n\nUse this evidence to construct the correct commands and URLs.\n"
 
     return prompt
 

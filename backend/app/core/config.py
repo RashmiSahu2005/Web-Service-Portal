@@ -46,4 +46,13 @@ class Settings:
     SCRIPT_EXECUTION_TIMEOUT_SECONDS: int = int(os.getenv("SCRIPT_EXECUTION_TIMEOUT_SECONDS", "900"))
     SCRIPT_POLLING_INTERVAL: int = int(os.getenv("SCRIPT_POLLING_INTERVAL", "60"))
 
+    # IMAP Configuration
+    ENABLE_IMAP_LISTENER: bool = os.getenv("ENABLE_IMAP_LISTENER", "false").lower() == "true"
+    IMAP_HOST: str = os.getenv("IMAP_HOST", "")
+    IMAP_PORT: int = int(os.getenv("IMAP_PORT", "993"))
+    IMAP_USERNAME: str = os.getenv("IMAP_USERNAME", "")
+    IMAP_PASSWORD: str = os.getenv("IMAP_PASSWORD", "")
+    IMAP_USE_SSL: bool = os.getenv("IMAP_USE_SSL", "true").lower() == "true"
+    IMAP_POLL_INTERVAL: int = int(os.getenv("IMAP_POLL_INTERVAL", "60"))
+
 settings = Settings()
