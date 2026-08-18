@@ -10,28 +10,36 @@ Currently, the system is designed to intake installation requests via an **IMAP 
 
 For experienced developers, here is the fastest way to start the project locally (assuming Redis and Ollama are already running).
 
+**1. Clone the repository**
 ```bash
-# 1. Clone the repository
 git clone <repository_url>
 cd ApplicationHub
+```
 
-# 2. Setup the backend using `uv`
+**2. Setup the backend using `uv`**
+```bash
 cd backend
 uv venv
 source .venv/bin/activate
 uv pip install -r requirements.txt
 cp .env.example .env
-# Edit .env with your specific credentials now!
+```
+*(Edit `.env` with your specific credentials now!)*
 
-# 3. Start the backend services (in separate terminals)
-# Terminal 1 - FastAPI Server
-cd backend && source .venv/bin/activate
+**3. Start the backend services (in separate terminals)**
+
+*Terminal 1 - FastAPI Server*
+```bash
+cd backend
+source .venv/bin/activate
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
 
-# Terminal 2 - Celery Worker
-cd backend && source .venv/bin/activate
+*Terminal 2 - Celery Worker*
+```bash
+cd backend
+source .venv/bin/activate
 ./worker.py
-
 ```
 
 ---
