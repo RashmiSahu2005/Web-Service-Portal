@@ -79,3 +79,48 @@ class TavilyService:
                 evidence.append(f"Source {idx + 1}: {res.get('url')}\nContent: {res.get('content')}")
                 
         return "\n\n".join(evidence) if evidence else "No evidence found via MCP."
+
+    @classmethod
+    def get_installation_evidence(cls, application_name: str, os_name: str) -> str:
+        """
+        Uses Tavily to search for the official installation commands and repository setup 
+        for a specific application on a specific OS.
+        """
+        query = f"official installation guide terminal commands repository setup for {application_name} on {os_name} linux"
+        
+        async def _run_mcp():
+            async with Client(FastMCPTransport(mcp_server)) as client:
+                result = await client.call_tool("search_tavily", {"query": query, "search_depth": "advanced"})
+                return getattr(result, "data", result)
+                
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+        if loop.is_running():
+            import threading
+            res_val = None
+            def run_in_thread():
+                nonlocal res_val
+                res_val = asyncio.run(_run_mcp())
+            thread = threading.Thread(target=run_in_thread)
+            thread.start()
+            thread.join()
+            result = res_val
+        else:
+            result = loop.run_until_complete(_run_mcp())
+
+        if isinstance(result, dict) and "error" in result:
+            return f"Error querying Tavily via MCP: {result['error']}"
+            
+        evidence = []
+        if isinstance(result, dict):
+            if "answer" in result and result["answer"]:
+                evidence.append(f"Tavily Answer: {result['answer']}")
+                
+            for idx, res in enumerate(result.get("results", [])[:5]):
+                evidence.append(f"Source {idx + 1}: {res.get('url')}\nContent: {res.get('content')}")
+                
+        return "\n\n".join(evidence) if evidence else "No evidence found via MCP."

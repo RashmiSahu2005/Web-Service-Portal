@@ -1,0 +1,14 @@
+celery
+fastapi
+fastmcp
+httpx
+langgraph
+mcp
+packaging
+pydantic
+python-dotenv
+redis
+requests
+sqlalchemy
+uvicorn
+websockets

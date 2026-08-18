@@ -47,10 +47,7 @@ class JobIdFilter(logging.Filter):
 # [2026-06-25 17:22:18,120] INFO | file.py:33 | Message
 
 LOG_FORMAT = (
-    "[%(asctime)s,%(msecs)03d] "
-    "%(levelname)s | "
-    "%(filename)s:%(lineno)d | "
-    "%(message)s"
+    "[%(asctime)s] [%(levelname)s] [File: %(filename)s] [Line: %(lineno)d] - %(message)s"
 )
 
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"

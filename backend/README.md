@@ -265,3 +265,37 @@ The project uses the following dependencies:
 | celery | 5.4.0 |
 | fastmcp | 3.4.7 |
 | mcp | 1.29.0 |
+
+.env example
+# Execution
+USE_FLEETDM=true
+FLEET_BASE_URL=https://mdm.example.com
+FLEET_API_TOKEN=your_fleet_api_token
+
+# AI / LLM
+LLM_PROVIDER=ollama
+LLM_MODEL=gemma4:31b-cloud
+LLM_BASE_URL=http://localhost:11434
+TAVILY_API_KEY=tvly-your_tavily_api_key
+
+# Email Polling (Input)
+ENABLE_IMAP_LISTENER=true
+IMAP_HOST=imap.example.com
+IMAP_PORT=993
+IMAP_USERNAME=listener@example.com
+IMAP_PASSWORD=your_imap_password
+IMAP_USE_SSL=true
+IMAP_POLL_INTERVAL=30
+
+# SMTP (Notifications)
+SMTP_ENABLED=true
+SMTP_SERVER=smtp.example.com
+SMTP_PORT=587
+SMTP_USERNAME=noreply@example.com
+SMTP_PASSWORD=your_smtp_password
+SMTP_SENDER_EMAIL=noreply@example.com
+
+# Infrastructure
+CELERY_BROKER_URL=redis://127.0.0.1:6379/1
+CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/1
+SQLITE_PATH=sqlite:///./application_hub.db

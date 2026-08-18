@@ -325,23 +325,17 @@ async def start_installation(job_id: str, request: StartInstallRequest = None, d
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
 
-    # Change state to QUEUED and update host_id if explicitly requested
-    update_data = {"status": "QUEUED"}
-    if request and request.host_id:
-        update_data["host_id"] = request.host_id
-        
-    job_repo.update(db, db_obj=job, obj_in=update_data)
-    
-    # Refresh job to ensure we have the latest host_id
-    job = job_repo.get(db, job_id)
-    
-    # Start the Celery execution
-    QueueService.enqueue_installation(
-        job_id=job_id,
+    # Create and queue the Celery execution via reusable service method
+    from app.services.installation_service import InstallationService
+    InstallationService.create_and_start_installation(
+        db=db,
+        application_id=app.id,
         application_name=app.name,
+        host_id=request.host_id if request and request.host_id else str(1),
         version=app.version or "Latest",
-        host_ids=[1] # simplified
+        job_id=job_id
     )
+
     
     return {"status": "QUEUED", "job_id": job_id, "message": "Installation job queued successfully"}
 
