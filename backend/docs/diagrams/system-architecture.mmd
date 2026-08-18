@@ -1,0 +1,32 @@
+graph TD
+    UI[Frontend / Web Service Portal]
+    FastAPI[FastAPI]
+    API[API Route / installation.py]
+    Queue[QueueService / Celery]
+    Worker[Celery Worker]
+    Graph[LangGraph]
+    Agents[Agents / Nodes]
+    FleetDM[FleetDMService]
+    Redis[Redis Cache]
+    Tavily[TavilyService / FastMCP]
+    LLM[LLMService]
+    Email[EmailService]
+    DB[PostgreSQL / SQLite]
+    Target[Target Host]
+
+    UI -- "application + host/IP" --> FastAPI
+    FastAPI -- "installation request" --> API
+    API -- "enqueues job" --> Queue
+    API -- "reads/writes jobs" --> DB
+    Queue -- "picks up job" --> Worker
+    Worker -- "initializes state" --> Graph
+    Graph -- "InstallationState" --> Agents
+    
+    Agents -- "fetches version context" --> Tavily
+    Agents -- "generates scripts/analyzes risk" --> LLM
+    Agents -- "reads/writes cache" --> Redis
+    
+    Agents -- "script execution/verification" --> FleetDM
+    FleetDM -- "executes on" --> Target
+    
+    Agents -- "sends failure/success" --> Email

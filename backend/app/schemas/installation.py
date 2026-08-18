@@ -29,3 +29,11 @@ class InstallationStatusResponse(BaseModel):
     logs: List[str]
     estimated_time: str
     device_readiness: Optional[dict] = None
+    risk_score: Optional[int] = None
+    risk_level: Optional[str] = None
+    risk_reasons: Optional[List[str]] = None
+    host_ids: Optional[List[int]] = None
+    current_stage: Optional[str] = None
+    execution_ids: Optional[List[str]] = None
+    verification_result: Optional[bool] = None
+    email_sent: Optional[bool] = None

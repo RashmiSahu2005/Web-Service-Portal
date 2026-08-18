@@ -56,7 +56,7 @@ const AppCard = ({ app }) => {
           onClick={handleInstall}
           className="px-6 py-2 bg-[#004aad] hover:bg-[#003882] text-white text-sm font-semibold rounded transition-colors"
         >
-          Install
+          View Details
         </button>
       </div>
     </div>

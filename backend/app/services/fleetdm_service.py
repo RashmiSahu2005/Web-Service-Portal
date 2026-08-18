@@ -88,6 +88,40 @@ class FleetDMService:
             return None
 
     @staticmethod
+    def get_host_by_id(host_id: int):
+        logger.info(f"FleetDMService: Getting host info for ID '{host_id}'")
+
+        url = f"{settings.FLEET_BASE_URL}/api/v1/fleet/hosts/{host_id}"
+
+        try:
+            response = requests.get(
+                url,
+                headers=FleetDMService._get_headers(),
+                timeout=10,
+            )
+
+            logger.info(
+                f"FleetDMService: GET {url} -> {response.status_code}"
+            )
+
+            response.raise_for_status()
+
+            data = response.json()
+            host = data.get("host")
+
+            if not host:
+                logger.warning(f"Host ID '{host_id}' not found.")
+                return None
+
+            logger.info(f"FleetDMService: Host Info retrieved for {host.get('id')}")
+
+            return host
+
+        except requests.exceptions.RequestException:
+            logger.exception("FleetDMService: Failed to get host info by ID.")
+            return None
+
+    @staticmethod
     def list_scripts():
         logger.info("FleetDMService: Listing scripts")
 
@@ -216,3 +250,35 @@ class FleetDMService:
             )
 
             return None
+
+    @staticmethod
+    def delete_script(script_id: int):
+        logger.info(f"FleetDMService: Deleting script ID {script_id}")
+
+        url = f"{settings.FLEET_BASE_URL}/api/v1/fleet/scripts/{script_id}"
+
+        try:
+            response = requests.delete(
+                url,
+                headers=FleetDMService._get_headers(),
+                timeout=10,
+            )
+
+            logger.info(
+                f"FleetDMService: DELETE {url} -> {response.status_code}"
+            )
+
+            # Handle success or acceptable already-deleted responses
+            if response.status_code in [200, 202, 204, 404]:
+                if response.status_code == 404:
+                    logger.info(f"FleetDMService: Script ID {script_id} not found (already deleted?)")
+                else:
+                    logger.info(f"FleetDMService: Script ID {script_id} successfully deleted")
+                return True
+
+            logger.error(f"FleetDMService: Unexpected response deleting script ID {script_id}: {response.text}")
+            response.raise_for_status()
+
+        except requests.exceptions.RequestException as e:
+            logger.exception(f"FleetDMService: Failed to delete script ID {script_id}: {e}")
+            return False

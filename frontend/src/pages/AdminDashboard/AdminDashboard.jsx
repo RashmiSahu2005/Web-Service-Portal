@@ -100,8 +100,12 @@ const AdminDashboard = () => {
                 <tr key={app.id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center">
-                      <div className="w-8 h-8 rounded bg-gray-100 border border-gray-200 flex items-center justify-center mr-3">
-                        <span className="text-xs font-bold text-gray-600">{app.name.substring(0,2).toUpperCase()}</span>
+                      <div className="w-8 h-8 rounded bg-gray-100 border border-gray-200 flex items-center justify-center mr-3 overflow-hidden">
+                        {app.package_path && app.package_path.startsWith('data:image') ? (
+                          <img src={app.package_path} alt={app.name} className="w-full h-full object-cover" />
+                        ) : (
+                          <span className="text-xs font-bold text-gray-600">{app.name.substring(0,2).toUpperCase()}</span>
+                        )}
                       </div>
                       <div>
                         <div className="text-sm font-medium text-gray-900">{app.name}</div>

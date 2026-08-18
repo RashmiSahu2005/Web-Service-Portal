@@ -1,0 +1,56 @@
+graph TD
+    START((START)) --> Validation[Validation]
+    
+    Validation -->|is_cancelled or FAILED| Notification[Notification]
+    Validation -->|success| HostDiscovery[Host Discovery]
+    
+    HostDiscovery -->|is_cancelled or FAILED| Notification
+    HostDiscovery -->|success| OSDetection[OS Detection]
+    
+    OSDetection -->|is_cancelled or FAILED| Notification
+    OSDetection -->|success| AppStrategyLookup[Application Strategy Lookup]
+    
+    AppStrategyLookup -->|is_cancelled or FAILED| Notification
+    AppStrategyLookup -->|strategy reused| AppStateCheck[Application State Check]
+    AppStrategyLookup -->|strategy NOT reused| AppStrategyDiscovery[Application Strategy Discovery]
+    
+    AppStrategyDiscovery -->|is_cancelled or FAILED| Notification
+    AppStrategyDiscovery -->|success| AppStateCheck
+    
+    AppStateCheck -->|is_cancelled or FAILED| Notification
+    AppStateCheck -->|already installed/latest| VersionDecision[Version Decision]
+    AppStateCheck -->|not installed/update needed| LatestVerDiscovery[Latest Version Discovery]
+    
+    LatestVerDiscovery -->|is_cancelled or FAILED| Notification
+    LatestVerDiscovery -->|success| VersionDecision
+    
+    VersionDecision -->|is_cancelled or FAILED| Notification
+    VersionDecision -->|hosts require installation| ScriptRegistryLookup[Script Registry Lookup]
+    VersionDecision -->|no installation required| Notification
+    
+    ScriptRegistryLookup -->|is_cancelled or FAILED| Notification
+    ScriptRegistryLookup -->|success| ScriptGeneration[Script Generation]
+    
+    ScriptGeneration -->|is_cancelled or FAILED| Notification
+    ScriptGeneration -->|success| RiskAnalysis[Risk Analysis]
+    
+    RiskAnalysis -->|is_cancelled or FAILED| Notification
+    RiskAnalysis -->|BLOCKED_HIGH_RISK| Notification
+    RiskAnalysis -->|success| FleetExecution[Fleet Execution]
+    
+    FleetExecution -->|success or failure| Monitoring[Monitoring]
+    
+    Monitoring --> InstScriptCleanup[Installation Script Cleanup]
+    
+    InstScriptCleanup --> ScriptFailureAnalysis[Script Failure Analysis]
+    
+    ScriptFailureAnalysis -->|SCRIPT_REGENERATION_TRIGGERED| ScriptGeneration
+    ScriptFailureAnalysis -->|is_cancelled or FAILED| Notification
+    ScriptFailureAnalysis -->|success| VerifScriptGeneration[Verification Script Generation]
+    
+    VerifScriptGeneration --> VerifExecution[Verification Execution]
+    VerifExecution --> VerifMonitoring[Verification Monitoring]
+    VerifMonitoring --> VerifScriptCleanup[Verification Script Cleanup]
+    VerifScriptCleanup --> Notification
+    
+    Notification --> END((END))

@@ -1,0 +1,77 @@
+graph TD
+    %% Input Layer
+    subgraph Input ["User Input / Interface"]
+        Frontend[Frontend Web Portal]
+        Frontend -->|POST /install/start| API[FastAPI: installation.py]
+    end
+
+    %% Backend Layer
+    subgraph API_Layer ["API & Queue Layer"]
+        API -->|Enqueue Job| Celery[QueueService / Celery Worker]
+    end
+
+    %% LangGraph Workflow
+    subgraph LangGraph ["LangGraph Orchestration"]
+        Celery -->|Initialize InstallationState| Start((START))
+        
+        Start --> Validation[Validation Node]
+        Validation --> HostDiscovery[Host Discovery Node]
+        HostDiscovery --> OSDetection[OS Detection Node]
+        OSDetection --> AppStrategyLookup[App Strategy Lookup Node]
+        
+        AppStrategyLookup -->|Strategy Known| AppStateCheck[App State Check Node]
+        AppStrategyLookup -->|Strategy Unknown| AppStrategyDiscovery[App Strategy Discovery Node]
+        AppStrategyDiscovery --> AppStateCheck
+        
+        AppStateCheck -->|Update Required| LatestVerDiscovery[Latest Version Discovery Node]
+        AppStateCheck -->|Up to date| VersionDecision[Version Decision Node]
+        
+        LatestVerDiscovery --> VersionDecision
+        VersionDecision --> ScriptRegistryLookup[Script Registry Lookup Node]
+        
+        ScriptRegistryLookup --> ScriptGeneration[Script Generation Node]
+        ScriptGeneration --> RiskAnalysis[Risk Analysis Node]
+        RiskAnalysis --> FleetExecution[Fleet Execution Node]
+        
+        FleetExecution --> Monitoring[Monitoring Node]
+        Monitoring --> ScriptCleanup[Installation Script Cleanup Node]
+        ScriptCleanup --> ScriptFailureAnalysis[Script Failure Analysis Node]
+        
+        ScriptFailureAnalysis -->|Retry Triggered| ScriptGeneration
+        ScriptFailureAnalysis -->|Success| VerifScriptGeneration[Verification Script Generation Node]
+        
+        VerifScriptGeneration --> VerifExecution[Verification Execution Node]
+        VerifExecution --> VerifMonitoring[Verification Monitoring Node]
+        VerifMonitoring --> VerifCleanup[Verification Script Cleanup Node]
+        
+        VerifCleanup --> Notification[Notification Node]
+        Notification --> END((END))
+    end
+
+    %% External Services Integration
+    subgraph ExternalServices ["External Services & Integrations"]
+        LatestVerDiscovery -.->|Query latest versions| Tavily[TavilyService / FastMCP]
+        LatestVerDiscovery -.->|Cache results| Redis[(Redis Cache)]
+        
+        ScriptGeneration -.->|Generate Script| LLM[LLMService / Ollama]
+        RiskAnalysis -.->|Analyze Script| LLM
+        
+        HostDiscovery -.->|Identify Hosts| FleetDM[FleetDM API]
+        FleetExecution -.->|Upload & Run| FleetDM
+        VerifExecution -.->|Upload & Run| FleetDM
+        
+        Notification -.->|Send Email| Email[EmailService / SMTP]
+    end
+
+    %% Target Execution
+    subgraph TargetEnv ["Target Infrastructure"]
+        FleetDM ==>|Remote Execution| TargetHost[Target Host / Device]
+        Monitoring -.->|Poll Exit Code| FleetDM
+        VerifMonitoring -.->|Poll Exit Code| FleetDM
+    end
+    
+    %% Error Paths
+    Validation -.->|Failed| Notification
+    HostDiscovery -.->|Failed| Notification
+    RiskAnalysis -.->|Blocked High Risk| Notification
+    ScriptFailureAnalysis -.->|Failed| Notification

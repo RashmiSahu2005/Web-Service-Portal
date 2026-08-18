@@ -3,7 +3,7 @@ from typing import List, Optional
 
 class ApplicationBase(BaseModel):
     name: str
-    version: str
+    version: Optional[str] = "latest"
     category: str
     description: Optional[str] = ""
     fleet_script_id: Optional[str] = None

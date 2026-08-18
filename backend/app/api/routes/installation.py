@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Depends, BackgroundTasks
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 import uuid
 from sqlalchemy.orm import Session
 from app.schemas.installation import InstallationStatusResponse
@@ -28,6 +28,20 @@ class StatusPayload(BaseModel):
     status: str
     step: str
     percentage: int
+
+class IdentifyHostRequest(BaseModel):
+    ip_address: str
+
+class IdentifyHostResponse(BaseModel):
+    host_id: int
+    hostname: str
+    ip_address: str
+    operating_system: str
+    os_version: str
+    architecture: str
+
+class StartInstallRequest(BaseModel):
+    host_id: Optional[str] = None
 
 class ConnectionManager:
     def __init__(self):
@@ -202,6 +216,51 @@ async def fleetdm_polling_progress(job_id: str, execution_id: str, app_name: str
             del readiness_cache[job_id]
         db.close()
 
+@router.post("/hosts/identify", response_model=IdentifyHostResponse)
+async def identify_host(req: IdentifyHostRequest):
+    if not settings.USE_FLEETDM:
+        return IdentifyHostResponse(
+            host_id=191,
+            hostname="mocked-host",
+            ip_address=req.ip_address,
+            operating_system="Windows",
+            os_version="11",
+            architecture="x64"
+        )
+        
+    host_info = FleetDMService.get_host_info(req.ip_address)
+    if not host_info:
+        raise HTTPException(status_code=404, detail=f"Host with IP {req.ip_address} not found in FleetDM.")
+        
+    platform = host_info.get("platform", "unknown")
+    cpu_type = host_info.get("cpu_type", "unknown")
+    
+    if cpu_type in ["x86_64", "amd64"]:
+        arch = "amd64"
+    elif cpu_type in ["arm64", "aarch64"]:
+        arch = "arm64"
+    else:
+        arch = cpu_type
+        
+    if platform == "ubuntu" or platform == "debian":
+        os_name = "Ubuntu"
+    elif platform == "windows":
+        os_name = "Windows"
+        arch = "x64" if arch == "amd64" else arch
+    elif platform == "darwin":
+        os_name = "macOS"
+    else:
+        os_name = platform.capitalize()
+
+    return IdentifyHostResponse(
+        host_id=host_info.get("id"),
+        hostname=host_info.get("hostname", "unknown"),
+        ip_address=req.ip_address,
+        operating_system=os_name,
+        os_version=host_info.get("os_version", "unknown"),
+        architecture=arch
+    )
+
 @router.post("/install/{application_id}", response_model=InstallResponse)
 async def request_installation(application_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     app = ApplicationService.get_application(db, application_id)
@@ -241,38 +300,62 @@ async def request_installation(application_id: str, background_tasks: Background
             }
             job_repo.create(db, obj_in=job_data)
             log_repo.create(db, obj_in={"job_id": job_id, "message": f"Battery level is below the required threshold."})
-            return InstallResponse(installation_id=job_id)
-        
-        script_id = app.fleet_script_id
-        if not script_id:
-            raise HTTPException(status_code=400, detail="Application does not have a Fleet script ID configured.")
-            
-        run_res = FleetDMService.run_script(host_id, script_id)
-        if not run_res or not run_res.get("execution_id"):
-            raise HTTPException(status_code=500, detail="Failed to run script on FleetDM.")
-            
-        execution_id = run_res["execution_id"]
-        
-        job_data = {
-            "id": job_id,
-            "application_id": application_id,
-            "host_id": str(host_id),
-            "status": "PENDING"
-        }
-        job_repo.create(db, obj_in=job_data)
-        
-        background_tasks.add_task(fleetdm_polling_progress, job_id, str(execution_id), app.name, "rashmi.sahu@ap2l.ai", hostname)
-    else:
-        job_data = {
-            "id": job_id,
-            "application_id": application_id,
-            "host_id": "local",
-            "status": "PENDING"
-        }
-        job_repo.create(db, obj_in=job_data)
-        background_tasks.add_task(simulate_installation_progress, job_id)
+    job_data = {
+        "id": job_id,
+        "application_id": application_id,
+        "host_id": "dynamic" if settings.USE_FLEETDM else "local",
+        "status": "PENDING"
+    }
+    job_repo.create(db, obj_in=job_data)
     
     return InstallResponse(installation_id=job_id)
+
+from app.services.queue_service import QueueService
+
+@router.post("/install/{job_id}/start")
+async def start_installation(job_id: str, request: StartInstallRequest = None, db: Session = Depends(get_db)):
+    job = job_repo.get(db, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+        
+    if job.status != "PENDING":
+        return {"status": "Already started or cancelled"}
+        
+    app = ApplicationService.get_application(db, job.application_id)
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    # Change state to QUEUED and update host_id if explicitly requested
+    update_data = {"status": "QUEUED"}
+    if request and request.host_id:
+        update_data["host_id"] = request.host_id
+        
+    job_repo.update(db, db_obj=job, obj_in=update_data)
+    
+    # Refresh job to ensure we have the latest host_id
+    job = job_repo.get(db, job_id)
+    
+    # Start the Celery execution
+    QueueService.enqueue_installation(
+        job_id=job_id,
+        application_name=app.name,
+        version=app.version or "Latest",
+        host_ids=[1] # simplified
+    )
+    
+    return {"status": "QUEUED", "job_id": job_id, "message": "Installation job queued successfully"}
+
+@router.post("/install/{job_id}/cancel")
+async def cancel_installation(job_id: str, db: Session = Depends(get_db)):
+    job = job_repo.get(db, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+        
+    if job.status not in ["COMPLETED", "FAILED"]:
+        job_repo.update(db, db_obj=job, obj_in={"status": "CANCELLED"})
+        log_repo.create(db, obj_in={"job_id": job_id, "message": "Installation cancelled by user."})
+        return {"status": "cancelled"}
+    return {"status": "too_late"}
 
 @router.get("/install/{installation_id}", response_model=InstallationStatusResponse)
 def get_installation_status(installation_id: str, db: Session = Depends(get_db)):
@@ -338,9 +421,35 @@ def get_job(job_id: str, db: Session = Depends(get_db)):
 @router.websocket("/ws/installation/{job_id}")
 async def websocket_installation_endpoint(websocket: WebSocket, job_id: str):
     await ws_manager.connect(websocket, job_id)
+    
+    import redis.asyncio as aioredis
+    import json
+    
+    redis_client = await aioredis.from_url("redis://localhost:6379/0")
+    pubsub = redis_client.pubsub()
+    await pubsub.subscribe(f"installation_{job_id}")
+    
+    async def redis_reader():
+        try:
+            async for message in pubsub.listen():
+                if message["type"] == "message":
+                    data = message["data"].decode("utf-8")
+                    # Send to this specific connection
+                    try:
+                        await websocket.send_text(data)
+                    except Exception:
+                        break
+        except Exception as e:
+            logger.error(f"Redis reader error: {e}")
+
+    task = asyncio.create_task(redis_reader())
+    
     try:
         while True:
-            # Keep connection alive, though client doesn't need to send anything
-            data = await websocket.receive_text()
+            # Keep connection alive
+            await websocket.receive_text()
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket, job_id)
+        task.cancel()
+        await pubsub.unsubscribe(f"installation_{job_id}")
+        await redis_client.close()

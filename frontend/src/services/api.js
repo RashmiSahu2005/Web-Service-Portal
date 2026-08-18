@@ -2,7 +2,7 @@ import axios from 'axios';
 
 // Create an Axios instance with base URL pointing to the FastAPI backend
 const apiClient = axios.create({
-  baseURL: 'http://localhost:8000',
+  baseURL: 'http://192.168.10.83:8000',
   headers: {
     'Content-Type': 'application/json'
   }
@@ -66,6 +66,36 @@ export const installApplication = async (applicationId) => {
     return response.data; // Should return { installation_id: "..." }
   } catch (error) {
     console.error("Error requesting installation:", error);
+    throw error;
+  }
+};
+
+export const identifyHost = async (ipAddress) => {
+  try {
+    const response = await apiClient.post(`/hosts/identify`, { ip_address: ipAddress });
+    return response.data;
+  } catch (error) {
+    console.error("Error identifying host:", error);
+    throw error;
+  }
+};
+
+export const startInstallation = async (jobId, payload = {}) => {
+  try {
+    const response = await apiClient.post(`/install/${jobId}/start`, payload);
+    return response.data;
+  } catch (error) {
+    console.error("Error starting installation:", error);
+    throw error;
+  }
+};
+
+export const cancelInstallation = async (jobId) => {
+  try {
+    const response = await apiClient.post(`/install/${jobId}/cancel`);
+    return response.data;
+  } catch (error) {
+    console.error("Error cancelling installation:", error);
     throw error;
   }
 };
