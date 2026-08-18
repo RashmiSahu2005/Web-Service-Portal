@@ -296,4 +296,4 @@ SMTP_SENDER_EMAIL=noreply@example.com
 # Infrastructure
 CELERY_BROKER_URL=redis://127.0.0.1:6379/1
 CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/1
-SQLITE_PATH=sqlite:///./application_hub.db
+SQLITE_PATH=sqlite:///./deployiq.db

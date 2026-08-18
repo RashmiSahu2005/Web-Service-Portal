@@ -12,7 +12,7 @@ class Settings:
     USE_FLEETDM: bool = os.getenv("USE_FLEETDM", "false").lower() == "true"
     FLEET_BASE_URL: str = os.getenv("FLEET_BASE_URL", "")
     FLEET_API_TOKEN: str = os.getenv("FLEET_API_TOKEN", "")
-    SQLITE_PATH: str = os.getenv("SQLITE_PATH", "sqlite:///./application_hub.db")
+    SQLITE_PATH: str = os.getenv("SQLITE_PATH", "sqlite:///./deployiq.db")
     POLLING_INTERVAL: int = int(os.getenv("POLLING_INTERVAL", "5"))
     SMTP_ENABLED: bool = os.getenv("SMTP_ENABLED", "True").lower() == "true"
     SMTP_SERVER: str = os.getenv("SMTP_SERVER", "apmosys.icewarpcloud.in")
