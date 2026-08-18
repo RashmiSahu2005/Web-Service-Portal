@@ -2,7 +2,7 @@
 
 ApplicationHub is an agentic software installation platform that enables fully automated, zero-touch software deployment to managed devices. 
 
-Currently, the system is designed to intake installation requests via an **IMAP email listener**, process the natural language request using an **LLM-powered LangGraph workflow**, classify the intent, parse host details, dynamically generate an idempotent installation script using **Tavily/FastMCP** web searches, and execute the installation natively on target machines via **FleetDM** orchestrated by a **Celery** task queue and a **FastAPI** backend. The platform also includes a **React/Vite** frontend for monitoring and administration.
+Currently, the system is designed to intake installation requests via an **IMAP email listener**, process the natural language request using an **LLM-powered LangGraph workflow**, classify the intent, parse host details, dynamically generate an idempotent installation script using **Tavily/FastMCP** web searches, and execute the installation natively on target machines via **FleetDM** orchestrated by a **Celery** task queue and a **FastAPI** backend.
 
 ---
 
@@ -32,11 +32,6 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 cd backend && source .venv/bin/activate
 ./worker.py
 
-# 4. Setup and start the frontend
-# Terminal 3 - React Frontend
-cd frontend
-npm install
-npm run dev
 ```
 
 ---
@@ -49,8 +44,7 @@ Below is the current end-to-end architecture of ApplicationHub.
 flowchart TD
     subgraph Input Layer
         Email[IMAP Mailbox]
-        UI[React/Vite Frontend]
-    end
+            end
 
     subgraph Backend Layer [FastAPI Application]
         API[API Endpoints]
@@ -76,8 +70,7 @@ flowchart TD
     end
 
     Email -->|Polls| Listener
-    UI --> API
-    Listener --> Classifier
+        Listener --> Classifier
     Classifier --> Approval
     Approval -->|Approved| Queue
     
@@ -116,14 +109,6 @@ ApplicationHub/
 │   ├── requirements.in      # Direct top-level dependencies
 │   ├── worker.py            # Entry point to start the Celery worker
 │   └── .env                 # Environment secrets (MUST NOT BE COMMITTED)
-├── frontend/
-│   ├── src/
-│   │   ├── components/      # React UI components
-│   │   ├── services/        # api.js containing frontend API URL
-│   │   └── App.jsx
-│   ├── package.json
-│   ├── vite.config.js
-│   └── tailwind.config.js
 └── README.md
 ```
 
@@ -136,12 +121,9 @@ ApplicationHub/
 | OS | Ubuntu/Linux or macOS | `uname -a` |
 | Python | >= 3.10 | `python3 --version` |
 | uv | Not pinned (Latest) | `uv --version` |
-| Node.js | >= 18.x (Recommended) | `node --version` |
-| npm | >= 9.x (Recommended) | `npm --version` |
 | Redis | 6.x or higher | `redis-server --version` |
 | Ollama | Latest | `ollama --version` |
 | Backend dependencies | Locked in requirements.txt | `uv pip list` |
-| Frontend dependencies| Locked in package-lock.json| `npm list` |
 
 ---
 
@@ -165,13 +147,6 @@ Used as the local LLM provider.
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 Verify: `ollama --version`
-
-### 3. Node.js & npm
-Used for the React frontend.
-```bash
-sudo apt install nodejs npm
-```
-Verify: `node --version` and `npm --version`
 
 ---
 
@@ -268,8 +243,7 @@ SQLITE_PATH=sqlite:///./application_hub.db
 When a new developer clones this repository, they must update specific configurations.
 
 ### Must Change
-1. **Frontend API URL**: In `frontend/src/services/api.js`, you must change `baseURL: 'http://192.168.10.83:8000'` to point to your local FastAPI instance (e.g., `http://localhost:8000` or your machine's IP).
-2. **`.env` Credentials**: You must supply your own `FLEET_API_TOKEN`, `TAVILY_API_KEY`, `IMAP_PASSWORD`, and `SMTP_PASSWORD`. 
+1. **`.env` Credentials**: You must supply your own `FLEET_API_TOKEN`, `TAVILY_API_KEY`, `IMAP_PASSWORD`, and `SMTP_PASSWORD`. 
 3. **IMAP Configuration**: Configure `IMAP_HOST` and `IMAP_USERNAME` to point to a mailbox you control for testing.
 
 ### May Change
@@ -289,7 +263,7 @@ When a new developer clones this repository, they must update specific configura
 3. Activate the backend virtual environment (`cd backend && source .venv/bin/activate`)
 4. Start the **Celery Worker** (`./worker.py`)
 5. Start the **FastAPI Server** (`uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload`)
-6. Start the **React Frontend** (`cd frontend && npm run dev`)
+
 
 *Note: The FastAPI server automatically initializes the SQLite database upon startup if it does not exist.*
 
@@ -375,9 +349,8 @@ The application connects to a **Real FleetDM** instance to execute scripts nativ
 When committing to GitLab, adhere to the following rules to protect credentials and environment specific configurations.
 
 **DO Commit:**
-- Application source code (`backend/app`, `frontend/src`)
+- Application source code (`backend/app`)
 - `requirements.txt`, `requirements.in`, `pyproject.toml`, `uv.lock`
-- `frontend/package.json`
 - `.env.example`
 - `README.md`
 
@@ -400,7 +373,6 @@ When committing to GitLab, adhere to the following rules to protect credentials 
 | **Celery jobs are stuck in PENDING** | The `./worker.py` process is not running | Open a new terminal, activate the venv, and run `./worker.py`. |
 | **Ollama connection refused** | Ollama daemon is offline | Run `ollama serve` or ensure the Ollama systemd service is active. |
 | **Model not found error** | The LLM_MODEL in `.env` has not been downloaded | Run `ollama run gemma4:31b-cloud` to pull the model. |
-| **Network Error / CORS in Frontend** | Frontend `api.js` points to the wrong IP | Edit `frontend/src/services/api.js` and change the `baseURL` to match your backend IP/port. |
 | **IMAP Login Failed** | Incorrect `IMAP_PASSWORD` or App Password required | Check your `.env` IMAP credentials. If using Gmail/O365, generate an App Password. |
 | **403 Forbidden in FleetDM Logs** | Invalid `FLEET_API_TOKEN` | Update the FleetDM token in your `.env`. |
 
@@ -414,7 +386,6 @@ When committing to GitLab, adhere to the following rules to protect credentials 
 - Dynamic web searching via Tavily for updated repository URLs upon script failure.
 - SQLite-backed state tracking and script registry.
 - End-to-end native execution via FleetDM.
-- React frontend for viewing configurations.
 
 ### Future / Planned
 - Integration with OTRS (Open Ticket Request System) to replace the temporary IMAP email listener as the primary input and approval source.

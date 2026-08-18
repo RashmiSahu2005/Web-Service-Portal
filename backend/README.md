@@ -5,7 +5,6 @@ ApplicationHub is an intelligent, agentic enterprise software portal (MVP) that 
 The system is "agentic" because it doesn't rely on hard-coded bash scripts for every application. Instead, it utilizes Large Language Models (LLMs) to dynamically discover installation strategies, determine package availability, generate scripts, and detect high-risk behaviors autonomously. 
 
 ### How a request flows through the system
-1. **Frontend (React)**: Users select software to install from a catalog.
 2. **FastAPI**: Receives the request and queues a background installation job.
 3. **Celery**: Picks up the queued job and triggers the main orchestration pipeline.
 4. **LangGraph**: Orchestrates the multi-agent workflow, coordinating everything from device validation and OS detection to script generation and execution.
@@ -20,8 +19,7 @@ The system is "agentic" because it doesn't rely on hard-coded bash scripts for e
 
 ```mermaid
 graph TD
-    User[User] -->|Selects App| Frontend[Frontend Web Portal]
-    Frontend -->|POST /install/start| API[FastAPI Installation API]
+    User[User] -->|POST /install/start| API[FastAPI Installation API]
     API -->|Enqueue| Queue[Queue/Celery Worker]
     Queue -->|Initialize State| LangGraph[LangGraph Orchestrator]
     LangGraph -->|Delegates to| Agents[Agents / Nodes]
