@@ -6,7 +6,7 @@ from app.core.logger import logger
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    description="Internal Enterprise Self-Service Software Portal (MVP)",
+    description="Internal Enterprise Self-Service Software Portal (MVP) - DeployIQ",
     version="0.1.0"
 )
 
@@ -29,7 +29,7 @@ from app.database import models
 
 @app.on_event("startup")
 async def startup_event():
-    logger.info("Application Hub MVP backend started.")
+    logger.info("DeployIQ MVP backend started.")
     # Create SQLite tables
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables initialized.")
@@ -48,4 +48,4 @@ async def startup_event():
 
 @app.get("/")
 def read_root():
-    return {"message": "Welcome to the Application Hub API"}
+    return {"message": "Welcome to the DeployIQ API"}

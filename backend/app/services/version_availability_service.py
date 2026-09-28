@@ -11,10 +11,39 @@ from app.graph.nodes.utils import broadcast_log
 class VersionAvailabilityService:
     
     @classmethod
-    def _generate_availability_script(cls, strategy: dict, version: str) -> str:
+    def _generate_availability_script(cls, strategy: dict, version: str, is_windows: bool = False) -> str:
         installer_type = strategy.get("installer_type", "")
         package_name = strategy.get("package_name", "")
         
+        if not is_windows:
+            return f"""#!/bin/bash
+installer="{installer_type}"
+pkg="{package_name}"
+ver="{version}"
+
+if [ -z "$pkg" ]; then
+    echo '{{"status": "NOT_AVAILABLE"}}'
+    exit 0
+fi
+
+if [[ "$installer" =~ ^(direct_deb|direct_rpm|tarball|vendor_download|official_deb|official_rpm|official_tarball|zip|binary)$ ]]; then
+    echo '{{"status": "CHECK_NOT_APPLICABLE"}}'
+elif [ "$installer" = "apt" ]; then
+    res=$(apt-cache madison "$pkg" 2>/dev/null)
+    if [ $? -eq 0 ]; then
+        if echo "$res" | grep -q "$ver"; then
+            echo '{{"status": "AVAILABLE"}}'
+        else
+            echo '{{"status": "NOT_AVAILABLE"}}'
+        fi
+    else
+        echo '{{"status": "CHECK_FAILED"}}'
+    fi
+else
+    echo '{{"status": "CHECK_NOT_APPLICABLE"}}'
+fi
+"""
+
         return f"""#!/usr/bin/env python3
 import subprocess
 import json
@@ -32,7 +61,9 @@ def check():
         return
         
     try:
-        if installer == "winget":
+        if installer in ["direct_deb", "direct_rpm", "tarball", "vendor_download", "official_deb", "official_rpm", "official_tarball", "zip", "binary"]:
+            result["status"] = "CHECK_NOT_APPLICABLE"
+        elif installer == "winget":
             cmd = ["winget", "show", "--id", pkg, "--version", ver, "--accept-source-agreements"]
             res = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
             if res.returncode == 0:
@@ -47,20 +78,9 @@ def check():
                     # Generic failure
                     result["status"] = "CHECK_FAILED"
                     
-        elif installer == "apt":
-            cmd = ["apt-cache", "madison", pkg]
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-            if res.returncode == 0:
-                if ver in res.stdout:
-                    result["status"] = "AVAILABLE"
-                else:
-                    result["status"] = "NOT_AVAILABLE"
-            else:
-                result["status"] = "CHECK_FAILED"
-                
         else:
             # Unsupported package manager for explicit version checks
-            result["status"] = "CHECK_FAILED"
+            result["status"] = "CHECK_NOT_APPLICABLE"
             
     except Exception as e:
         result["status"] = "CHECK_FAILED"
@@ -132,9 +152,11 @@ if __name__ == "__main__":
                 broadcast_log(job_id, agent_name, f"No strategy found for {sig}, returning CHECK_FAILED.", "warning")
                 return "CHECK_FAILED"
                 
-            script_content = cls._generate_availability_script(strategy, version)
+            is_windows = "windows" in sig.lower()
+            script_content = cls._generate_availability_script(strategy, version, is_windows)
             
-            fd, temp_path = tempfile.mkstemp(prefix="apphub_avail_check_", suffix=".py")
+            ext = ".py" if is_windows else ".sh"
+            fd, temp_path = tempfile.mkstemp(prefix="apphub_avail_check_", suffix=ext)
             script_id = None
             try:
                 with os.fdopen(fd, 'w') as f:
@@ -166,6 +188,8 @@ if __name__ == "__main__":
             
             if status == "CHECK_FAILED":
                 return "CHECK_FAILED"
+            elif status == "CHECK_NOT_APPLICABLE":
+                return "CHECK_NOT_APPLICABLE"
             elif status == "NOT_AVAILABLE":
                 overall_status = "NOT_AVAILABLE"
                 

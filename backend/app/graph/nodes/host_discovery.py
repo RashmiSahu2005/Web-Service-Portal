@@ -17,13 +17,7 @@ def discover_hosts(state: InstallationState) -> dict:
     
     if not settings.USE_FLEETDM:
         broadcast_log(job_id, agent_name, "FleetDM is disabled. Mocking host discovery.")
-        # Multi-host mocked as requested
-        # Wait, the user specifically mentioned: "The state must support: host_ids = [191, 205, 218]" 
-        # But this was an example. Let's provide a list of mocked hosts for multi-host testing if they want, 
-        # but 191 is fine for default unless specified otherwise. We can just keep [191] for mocked, 
-        # or check if it's supposed to be a multi-host mocked test. I'll just use [191, 205] to prove it works.
-        # Actually, let's stick to [191] to not break existing simulation unless requested.
-        updates["host_ids"] = [191]
+        updates["host_ids"] = [settings.MOCK_HOST_ID]
         
         broadcast_log(job_id, agent_name, f"Hosts discovered: {updates['host_ids']}")
         AgentEventService.broadcast_host_info(

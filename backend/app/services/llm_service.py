@@ -24,7 +24,10 @@ class LLMService:
         payload = {
             "model": model,
             "prompt": prompt,
-            "stream": False
+            "stream": False,
+            "options": {
+                "num_predict": 2048
+            }
         }
         
         if json_mode:
@@ -32,6 +35,7 @@ class LLMService:
         
         logger.info(f"[LLMService] Calling Ollama provider at {url} with model {model}")
         
+        response = None
         try:
             response = requests.post(url, json=payload)
             response.raise_for_status()

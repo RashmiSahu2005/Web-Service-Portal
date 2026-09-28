@@ -9,8 +9,44 @@ from app.core.config import settings
 from app.services.agent_event_service import AgentEventService
 from app.graph.nodes.utils import broadcast_stage, broadcast_log
 
-def _generate_state_check_script(strategy: dict, os_family: str) -> str:
-    installed_cmd = json.dumps(strategy.get("installed_version_command", []))
+def _generate_state_check_script(app_strategies: dict, is_windows: bool = False) -> str:
+    # app_strategies is {app_name: strategy}
+    if not is_windows:
+        script = ['echo "{"']
+        items = list(app_strategies.items())
+        for i, (app_name, strategy) in enumerate(items):
+            cmd = strategy.get("installed_version_command", [])
+            comma = "," if i < len(items) - 1 else ""
+            if not cmd:
+                script.append(f'  echo \'  "{app_name}": {{"installed_raw": null}}{comma}\'')
+            else:
+                cmd_str = " ".join(cmd)
+                script.append(f"""
+  RAW=$( ({cmd_str}) 2>/dev/null )
+  EC=$?
+  if [ $EC -eq 0 ] && [ -n "$RAW" ]; then
+    VERSION=$(echo "$RAW" | grep -oE '[0-9]+\\.[0-9]+(\\.[0-9]+)*' | head -n1)
+    if [ -z "$VERSION" ]; then
+      VERSION=$(echo "$RAW" | head -n1 | cut -c1-100 | tr -d '"' | tr -d "'")
+    fi
+    echo '  "{app_name}": {{"installed_raw": "'"$VERSION"'", "exit_code": 0}}{comma}'
+  else
+    # Escaping JSON correctly for null and integer
+    if [ $EC -eq 0 ]; then
+      echo '  "{app_name}": {{"installed_raw": null, "exit_code": 0}}{comma}'
+    else
+      echo '  "{app_name}": {{"installed_raw": null, "exit_code": '"$EC"'}}{comma}'
+    fi
+  fi
+""")
+        script.append('echo "}"')
+        return "\n".join(script)
+
+    checks = {}
+    for app_name, strategy in app_strategies.items():
+        checks[app_name] = strategy.get("installed_version_command", [])
+        
+    checks_json = json.dumps(checks)
     
     return f"""#!/usr/bin/env python3
 import subprocess
@@ -25,16 +61,19 @@ def extract_version(raw):
     return raw.strip()[:100]
 
 def check():
-    result = {{"installed_raw": None}}
+    result = {{}}
+    checks = {checks_json}
     
-    installed_cmd = {installed_cmd}
-    if installed_cmd:
-        try:
-            res = subprocess.run(installed_cmd, capture_output=True, text=True, timeout=10)
-            if res.returncode == 0:
-                result["installed_raw"] = extract_version(res.stdout.strip())
-        except Exception:
-            pass
+    for app_name, installed_cmd in checks.items():
+        result[app_name] = {{"installed_raw": None, "exit_code": -1}}
+        if installed_cmd:
+            try:
+                res = subprocess.run(installed_cmd, capture_output=True, text=True, timeout=10)
+                result[app_name]["exit_code"] = res.returncode
+                if res.returncode == 0:
+                    result[app_name]["installed_raw"] = extract_version(res.stdout.strip())
+            except Exception:
+                pass
             
     print(json.dumps(result))
 
@@ -42,8 +81,8 @@ if __name__ == "__main__":
     check()
 """
 
-def _upload_state_check_script(content: str, job_id: str, agent_name: str) -> str:
-    fd, temp_path = tempfile.mkstemp(prefix="apphub_state_check_", suffix=".py")
+def _upload_state_check_script(content: str, job_id: str, agent_name: str, ext: str = ".sh") -> str:
+    fd, temp_path = tempfile.mkstemp(prefix="apphub_state_check_", suffix=ext)
     try:
         with os.fdopen(fd, 'w') as f:
             f.write(content)
@@ -91,22 +130,21 @@ async def _check_on_host(host_id: int, script_id: str, job_id: str, agent_name: 
                     output = result.get("output", "")
                     try:
                         parsed_json = json.loads(output)
-                        return {
-                            "installed": parsed_json.get("installed_raw")
-                        }
+                        # parsed_json is {app_name: {"installed_raw": "..."}}
+                        return parsed_json
                     except Exception as e:
                         broadcast_log(job_id, agent_name, f"Failed to parse state JSON on host {host_id}: {e}", "warning")
-                        return {"installed": None}
-                return {"installed": None}
+                        return {}
+                return {}
             
             attempts += 1
             
         broadcast_log(job_id, agent_name, f"State check script timed out on host {host_id}", "warning")
-        return {"installed": None}
+        return {}
         
     except Exception as e:
         broadcast_log(job_id, agent_name, f"Error checking state on host {host_id}: {e}", "error")
-        return {"installed": None}
+        return {}
 
 def _get_os_family(os_name: str) -> str:
     if os_name in ["Ubuntu", "Debian", "Linux"]:
@@ -139,7 +177,7 @@ async def check_application_state(state: InstallationState) -> dict:
         broadcast_stage(job_id, agent_name, stage_name, "FAILED")
         return updates
         
-    app_name = state.get("application_name")
+    applications = state.get("applications", [])
     os_groups = state.get("os_groups", {})
     strategies = state.get("strategies", {})
     
@@ -147,45 +185,90 @@ async def check_application_state(state: InstallationState) -> dict:
         broadcast_log(job_id, agent_name, "DRY RUN - Mocking state check for all hosts")
         for sig, host_ids in os_groups.items():
             for host_id in host_ids:
-                updates["application_states"][host_id] = "NOT_INSTALLED"
-                updates["installed_versions"][host_id] = None
+                updates["application_states"][host_id] = {}
+                updates["installed_versions"][host_id] = {}
                 updates["hosts_requiring_installation"].append(host_id)
+                for app in applications:
+                    app_name = app.get("name") or app.get("application_name")
+                    updates["application_states"][host_id][app_name] = "NOT_INSTALLED"
+                    updates["installed_versions"][host_id][app_name] = None
         broadcast_stage(job_id, agent_name, stage_name, "COMPLETED")
         return updates
 
     for sig, host_ids in os_groups.items():
-        strategy = strategies.get(sig)
-        if not strategy:
+        app_strategies = strategies.get(sig, {})
+        if not app_strategies:
             broadcast_log(job_id, agent_name, f"No strategy found for {sig}, skipping.", "warning")
             for host_id in host_ids:
-                updates["application_states"][host_id] = "CHECK_FAILED"
+                if host_id not in updates["application_states"]: updates["application_states"][host_id] = {}
+                for app in applications:
+                    app_name = app.get("name") or app.get("application_name")
+                    # Do not overwrite successful states
+                    if app.get("status") not in ["SUCCESS", "ALREADY_INSTALLED"]:
+                        updates["application_states"][host_id][app_name] = "STATE_CHECK_UNAVAILABLE"
             continue
             
-        os_family = _get_os_family(sig.split("_")[0])
-        script_content = _generate_state_check_script(strategy, os_family)
-        script_id = _upload_state_check_script(script_content, job_id, agent_name)
+        is_windows = "windows" in sig.lower()
+        ext = ".py" if is_windows else ".sh"
+        script_content = _generate_state_check_script(app_strategies, is_windows=is_windows)
+        script_id = _upload_state_check_script(script_content, job_id, agent_name, ext=ext)
         
         if not script_id:
             broadcast_log(job_id, agent_name, f"Failed to upload state check script for {sig}.", "warning")
             for host_id in host_ids:
-                updates["application_states"][host_id] = "CHECK_FAILED"
+                if host_id not in updates["application_states"]: updates["application_states"][host_id] = {}
+                for app in applications:
+                    app_name = app.get("name") or app.get("application_name")
+                    if app.get("status") not in ["SUCCESS", "ALREADY_INSTALLED"]:
+                        updates["application_states"][host_id][app_name] = "STATE_CHECK_UNAVAILABLE"
             continue
             
         for host_id in host_ids:
             broadcast_log(job_id, agent_name, f"Checking state on host {host_id} ({sig})...")
+            # res is {app_name: {"installed_raw": "..."}}
             res = await _check_on_host(host_id, script_id, job_id, agent_name)
             
-            installed = res.get("installed")
-            updates["installed_versions"][host_id] = installed
-            broadcast_log(job_id, agent_name, f"Installed version: {installed or 'None'}")
+            if host_id not in updates["installed_versions"]: updates["installed_versions"][host_id] = {}
+            if host_id not in updates["application_states"]: updates["application_states"][host_id] = {}
             
-            app_state = "UNKNOWN"
-            if not installed:
-                app_state = "NOT_INSTALLED"
-            else:
-                app_state = "INSTALLED"
+            active_app_name = state.get("application_name")
+            for app in applications:
+                app_name = app.get("name") or app.get("application_name")
+                if app_name != active_app_name:
+                    continue
+                    
+                app_res = res.get(app_name, {})
+                installed = app_res.get("installed_raw")
+                exit_code = app_res.get("exit_code", -1)
                 
-            updates["application_states"][host_id] = app_state
+                updates["installed_versions"][host_id][app_name] = installed
+                broadcast_log(job_id, agent_name, f"[{app_name}] Installed version: {installed or 'None'} (Exit Code: {exit_code})")
+                
+                app_state = "STATE_CHECK_UNAVAILABLE"
+                if not res: # FleetDM execution failed entirely
+                    app_state = "STATE_CHECK_UNAVAILABLE"
+                elif installed:
+                    app_state = "INSTALLED"
+                elif exit_code == 0:
+                    # The command succeeded but returned no version output
+                    app_state = "CURRENT_VERSION_UNKNOWN"
+                else:
+                    app_state = "NOT_INSTALLED"
+                    
+                # Do not overwrite if already SUCCESS from a previous run or iteration
+                if app.get("status") not in ["SUCCESS", "ALREADY_INSTALLED"]:
+                    updates["application_states"][host_id][app_name] = app_state
+                
+                if app_state in ["NOT_INSTALLED", "STATE_CHECK_UNAVAILABLE", "CURRENT_VERSION_UNKNOWN"] and host_id not in updates["hosts_requiring_installation"]:
+                    updates["hosts_requiring_installation"].append(host_id)
+                    
+        # Cleanup the temporary state check script from FleetDM
+        if script_id:
+            try:
+                FleetDMService.delete_script(int(script_id))
+                broadcast_log(job_id, agent_name, f"Cleaned up temporary state check script {script_id}")
+            except Exception as e:
+                broadcast_log(job_id, agent_name, f"Failed to clean up state check script {script_id}: {e}", "warning")
 
     # We do not broadcast application state updates here, because Version Decision Node will do it
     # after determining the latest version.

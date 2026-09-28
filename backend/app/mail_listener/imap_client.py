@@ -39,20 +39,30 @@ class IMAPClient:
 
         try:
             self.mail.select(mailbox)
-            # Use ALL instead of UNSEEN to make testing easier if emails are already read
-            status, messages = self.mail.search(None, 'ALL')
             
+            # Fetch ALL email IDs sorted oldest→newest
+            status, messages = self.mail.search(None, 'ALL')
             if status != 'OK':
                 logger.error(f"IMAPClient: Search failed with status {status}")
                 return []
-                
-            email_ids = messages[0].split()
-            # Only process the 5 most recent emails to avoid processing the whole inbox
-            recent_email_ids = email_ids[-5:] if len(email_ids) > 5 else email_ids
+            all_ids = set(messages[0].split())
+            
+            # Take the N most recent by sequence number
+            max_emails = settings.IMAP_MAX_EMAILS
+            all_id_list = messages[0].split()
+            recent_ids = set(all_id_list[-max_emails:] if len(all_id_list) > max_emails else all_id_list)
+            
+            # Also fetch any UNSEEN (unread) emails — these may be approval replies
+            # that are outside the recent window
+            status_unseen, unseen_msgs = self.mail.search(None, 'UNSEEN')
+            unseen_ids = set(unseen_msgs[0].split()) if status_unseen == 'OK' else set()
+            
+            # Union: recent + unseen — never miss a new reply
+            email_ids_to_fetch = list(recent_ids | unseen_ids)
             
             fetched_emails = []
             
-            for email_id in recent_email_ids:
+            for email_id in email_ids_to_fetch:
                 status, msg_data = self.mail.fetch(email_id, '(RFC822)')
                 if status == 'OK':
                     for response_part in msg_data:

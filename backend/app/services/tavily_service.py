@@ -3,7 +3,6 @@ from typing import Dict, Any, List
 import asyncio
 from app.core.config import settings
 from fastmcp import FastMCP
-from fastmcp.client import Client, FastMCPTransport
 
 # 1. Define the FastMCP Server
 mcp_server = FastMCP("Tavily Search Server")
@@ -33,39 +32,25 @@ def search_tavily(query: str, search_depth: str = "basic") -> dict:
 
 class TavilyService:
     @classmethod
-    def get_version_evidence(cls, application_name: str) -> str:
+    def get_version_evidence(cls, application_name: str, current_version: str = "", installation_method: str = "", os_name: str = "", architecture: str = "") -> str:
         """
         Uses Tavily (via FastMCP) to search for the current latest version of an application.
         Returns the raw results string for the LLM to interpret.
         """
-        query = f"latest official release version of {application_name} software release notes"
+        query = f"What is the current latest stable release version of {application_name}"
+        if os_name and os_name.lower() != "unknown":
+            query += f" for {os_name}"
+            if architecture and architecture.lower() != "unknown":
+                query += f" {architecture}"
+        query += "? "
         
-        async def _run_mcp():
-            # Use FastMCP Client to connect to the in-memory FastMCP server
-            async with Client(FastMCPTransport(mcp_server)) as client:
-                result = await client.call_tool("search_tavily", {"query": query, "search_depth": "advanced"})
-                # In fastmcp 3.4.7, the return value is often wrapped in `data` or `structured_content`
-                return getattr(result, "data", result)
-                
-        # Handle asyncio event loop gracefully regardless of calling context
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-        if loop.is_running():
-            import threading
-            res_val = None
-            def run_in_thread():
-                nonlocal res_val
-                res_val = asyncio.run(_run_mcp())
-            thread = threading.Thread(target=run_in_thread)
-            thread.start()
-            thread.join()
-            result = res_val
-        else:
-            result = loop.run_until_complete(_run_mcp())
+        if current_version:
+            query += f"The current installed version is {current_version}. "
+        if installation_method:
+            query += f"The detected installation method is {installation_method}. "
+        query += "(Provide official sources, GitHub releases, or Wikipedia)"
+        
+        result = search_tavily(query, search_depth="advanced")
 
         if isinstance(result, dict) and "error" in result:
             return f"Error querying Tavily via MCP: {result['error']}"
@@ -88,29 +73,36 @@ class TavilyService:
         """
         query = f"official installation guide terminal commands repository setup for {application_name} on {os_name} linux"
         
-        async def _run_mcp():
-            async with Client(FastMCPTransport(mcp_server)) as client:
-                result = await client.call_tool("search_tavily", {"query": query, "search_depth": "advanced"})
-                return getattr(result, "data", result)
-                
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+        result = search_tavily(query, search_depth="advanced")
+
+        if isinstance(result, dict) and "error" in result:
+            return f"Error querying Tavily via MCP: {result['error']}"
             
-        if loop.is_running():
-            import threading
-            res_val = None
-            def run_in_thread():
-                nonlocal res_val
-                res_val = asyncio.run(_run_mcp())
-            thread = threading.Thread(target=run_in_thread)
-            thread.start()
-            thread.join()
-            result = res_val
-        else:
-            result = loop.run_until_complete(_run_mcp())
+        evidence = []
+        if isinstance(result, dict):
+            if "answer" in result and result["answer"]:
+                evidence.append(f"Tavily Answer: {result['answer']}")
+                
+            for idx, res in enumerate(result.get("results", [])[:5]):
+                evidence.append(f"Source {idx + 1}: {res.get('url')}\nContent: {res.get('content')}")
+                
+        return "\n\n".join(evidence) if evidence else "No evidence found via MCP."
+
+    @classmethod
+    def get_detailed_installation_evidence(cls, application_name: str, os_name: str, architecture: str, failure_context: str = "") -> str:
+        """
+        Uses Tavily to search for detailed installation facts specifically tailored for script generation.
+        """
+        query = (
+            f"Find the official installation method for {application_name} on {os_name} {architecture}. "
+            "Determine latest stable version, official download URL, Linux package format, "
+            "installation procedure, required dependencies, installation path, executable path, "
+            "non-GUI verification method, and official version/download source."
+        )
+        if failure_context:
+            query += f" Note previous failures: {failure_context}. Recommend alternative methods if possible."
+            
+        result = search_tavily(query, search_depth="advanced")
 
         if isinstance(result, dict) and "error" in result:
             return f"Error querying Tavily via MCP: {result['error']}"

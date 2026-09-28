@@ -40,5 +40,35 @@ class RedisService:
             logger.error(f"Error writing to Redis cache: {e}")
             return False
 
+    # ── Installation Research Cache ──────────────────────────────────────────
+    # Separate from the Script Registry (which stores proven executable scripts).
+    # This cache stores installation *knowledge* with a shorter TTL.
+
+    def get_research_result(self, canonical_app: str, version: str, os_name: str, architecture: str) -> Optional[Dict]:
+        """Retrieve a cached installation research result. Returns None on miss or error."""
+        if not self.client:
+            return None
+        key = f"deployiq:research:{canonical_app.lower()}:{version.lower()}:{os_name.lower()}:{architecture.lower()}"
+        try:
+            data = self.client.get(key)
+            if data:
+                return json.loads(data)
+        except Exception as e:
+            logger.error(f"[ResearchCache] Error reading research cache: {e}")
+        return None
+
+    def set_research_result(self, canonical_app: str, version: str, os_name: str, architecture: str, result: Dict) -> bool:
+        """Cache an installation research result. Returns True on success."""
+        if not self.client:
+            return False
+        key = f"deployiq:research:{canonical_app.lower()}:{version.lower()}:{os_name.lower()}:{architecture.lower()}"
+        ttl_seconds = settings.INSTALLATION_RESEARCH_CACHE_TTL_HOURS * 3600
+        try:
+            self.client.setex(key, ttl_seconds, json.dumps(result))
+            return True
+        except Exception as e:
+            logger.error(f"[ResearchCache] Error writing research cache: {e}")
+            return False
+
 # Global instance for use in nodes
 redis_service = RedisService()

@@ -114,3 +114,38 @@ class AgentEventService:
         }
         AgentEventService._safe_broadcast(job_id, payload)
 
+    @staticmethod
+    def broadcast_request_summary(job_id: str, sender: str, subject: str, applications: List[str]):
+        payload = {
+            "type": "request_summary",
+            "sender": sender,
+            "subject": subject,
+            "applications": applications
+        }
+        AgentEventService._safe_broadcast(job_id, payload)
+
+    @staticmethod
+    def broadcast_research_result(
+        job_id: str,
+        application: str,
+        recommended_method: str,
+        confidence: float,
+        sources_count: int,
+        sources: List[str],
+        warnings: List[str],
+        attempt: int,
+    ):
+        """Broadcast installation research findings to the frontend."""
+        payload = {
+            "type": "research_result",
+            "application": application,
+            "recommended_method": recommended_method,
+            "confidence": round(confidence, 2),
+            "sources_count": sources_count,
+            # Only include the first 5 source URLs to keep payload small
+            "sources": sources[:5],
+            "warnings": warnings[:5],
+            "attempt": attempt,
+        }
+        AgentEventService._safe_broadcast(job_id, payload)
+

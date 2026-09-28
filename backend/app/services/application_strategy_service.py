@@ -1,6 +1,7 @@
 import datetime
 import hashlib
 import json
+# pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Session
 from app.database.database import SessionLocal
 from app.database.models.application_strategy import ApplicationStrategy
@@ -13,8 +14,9 @@ class ApplicationStrategyService:
             # We look for a strategy matching app, os, arch. os_version can be a fuzzy match or exact, 
             # for now let's just match os and arch for broader compatibility if os_version varies slightly,
             # or match exactly if required.
+            from sqlalchemy import func
             strategy = db.query(ApplicationStrategy).filter(
-                ApplicationStrategy.application_name == application_name,
+                func.lower(ApplicationStrategy.application_name) == func.lower(application_name),
                 ApplicationStrategy.operating_system == operating_system,
                 ApplicationStrategy.architecture == architecture,
                 ApplicationStrategy.strategy_status == "ACTIVE"

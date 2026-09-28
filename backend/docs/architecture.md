@@ -1,4 +1,4 @@
-# ApplicationHub Architecture
+# DeployIQ Architecture
 
 ## 1. High-Level Architecture
 

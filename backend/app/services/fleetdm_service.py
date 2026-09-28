@@ -156,10 +156,14 @@ class FleetDMService:
             "Authorization": f"Bearer {settings.FLEET_API_TOKEN}"
         }
 
+        import os
+
         try:
             with open(path, "rb") as f:
+                # Retain the original filename from 'path'
+                original_filename = os.path.basename(path)
                 files = {
-                    "script": f
+                    "script": (original_filename, f)
                 }
 
                 response = requests.post(
@@ -227,7 +231,7 @@ class FleetDMService:
             response = requests.get(
                 url,
                 headers=FleetDMService._get_headers(),
-                timeout=10,
+                timeout=30,
             )
 
             logger.info(
@@ -244,9 +248,9 @@ class FleetDMService:
 
             return response.json()
 
-        except requests.exceptions.RequestException:
-            logger.exception(
-                "FleetDMService: Failed to fetch execution result."
+        except requests.exceptions.RequestException as e:
+            logger.warning(
+                f"FleetDMService: Failed to fetch execution result: {str(e)}"
             )
 
             return None

@@ -5,11 +5,11 @@ from app.tasks.installation_tasks import run_installation_job
 
 class QueueService:
     @staticmethod
-    def enqueue_installation(job_id: str, application_name: str = None, version: str = None, host_ids: list = None) -> str:
+    def enqueue_installation(job_id: str, application_name: str = None, version: str = None, host_ids: list = None, applications: list = None, requester_email: str = None) -> str:
         # Note: Celery only needs job_id. Extra parameters kept for interface compatibility.
         logger.info(f"Enqueueing Celery task for job {job_id}...")
         try:
-            task = run_installation_job.delay(job_id)
+            task = run_installation_job.delay(job_id, requester_email=requester_email, applications=applications)
             return str(task.id)
         except Exception as e:
             logger.error(f"Failed to enqueue Celery task: {e}")

@@ -41,7 +41,7 @@ def _perform_static_analysis(script: str, job_id: str, agent_name: str, script_t
                                 for kw in node.keywords
                             )
                             if has_shell_true:
-                                score += 40
+                                score += 20
                                 reasons.append("Uses subprocess.run with shell=True")
                             else:
                                 score += 10
@@ -77,6 +77,13 @@ def _perform_static_analysis(script: str, job_id: str, agent_name: str, script_t
         is_high_risk = True
 
     score = min(score, 100)
+    
+    # If no genuinely dangerous patterns were detected (is_high_risk is False),
+    # cap the static score at 60 so that normal install scripts using shell=True
+    # + curl/wget cannot alone trigger a HIGH block. The LLM has full context.
+    if not is_high_risk:
+        score = min(score, 60)
+        
     return score, reasons, is_high_risk
 
 def _perform_llm_analysis(script: str, job_id: str, agent_name: str, script_type: str = ".py"):
@@ -89,14 +96,15 @@ Provide your response strictly in the following JSON format, and NOTHING ELSE:
 }}
 
 Score Guidelines:
-- 0-30 (LOW): Standard package installs (apt-get), importing official GPG keys, normal subprocess execution, running as root.
-- 31-70 (MEDIUM): External repos, downloading remote scripts but verifying them, modifying /etc configuration for the app.
-- 71-100 (HIGH): Destructive commands (rm -rf /), hardcoded secrets, shell=True with arbitrary variables, completely unknown remote binaries, curl | bash.
+- 0-30 (LOW): Standard package installs (apt-get), importing official GPG keys, normal subprocess execution, running as root, setting up standard database users.
+- 31-70 (MEDIUM): External repos, downloading remote scripts but verifying them, modifying /etc configuration, setting up default passwords for automated database or infrastructure installations.
+- 71-100 (HIGH): Destructive commands (rm -rf /), hardcoded AWS keys, completely unknown remote binaries, curl | bash.
 
 IMPORTANT RULES:
 - DO NOT automatically classify an official package installer as HIGH just because it uses 'root', 'subprocess', or 'apt'.
+- DO NOT classify automated database or server setups as HIGH simply because they set a default password or create users. This is expected in automated deployments.
 - Evaluate INTENT. Official installation logic is LOW/MEDIUM.
-- Only flag HIGH for genuinely dangerous operations.
+- Only flag HIGH for genuinely malicious or destructive operations.
 
 Script to analyze:
 ```{lang_name.lower()}

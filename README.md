@@ -42,6 +42,13 @@ source .venv/bin/activate
 ./worker.py
 ```
 
+*Terminal 3 - React Frontend*
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
 ---
 
 ## Current Architecture
@@ -117,6 +124,12 @@ ApplicationHub/
 │   ├── requirements.in      # Direct top-level dependencies
 │   ├── worker.py            # Entry point to start the Celery worker
 │   └── .env                 # Environment secrets (MUST NOT BE COMMITTED)
+├── frontend/                # React + Vite frontend for real-time monitoring
+│   ├── src/
+│   │   ├── components/      # UI components (Timeline, Logs, etc.)
+│   │   ├── hooks/           # WebSocket connection logic
+│   │   └── App.tsx          # Main layout
+│   └── package.json         # Node dependencies
 └── README.md
 ```
 
@@ -128,6 +141,7 @@ ApplicationHub/
 |---|---|---|
 | OS | Ubuntu/Linux or macOS | `uname -a` |
 | Python | >= 3.10 | `python3 --version` |
+| Node.js / npm | >= 18.x | `node -v` && `npm -v` |
 | uv | Not pinned (Latest) | `uv --version` |
 | Redis | 6.x or higher | `redis-server --version` |
 | Ollama | Latest | `ollama --version` |
@@ -394,6 +408,7 @@ When committing to GitLab, adhere to the following rules to protect credentials 
 - Dynamic web searching via Tavily for updated repository URLs upon script failure.
 - SQLite-backed state tracking and script registry.
 - End-to-end native execution via FleetDM.
+- Real-time React frontend UI driven by WebSocket events.
 
 ### Future / Planned
 - Integration with OTRS (Open Ticket Request System) to replace the temporary IMAP email listener as the primary input and approval source.

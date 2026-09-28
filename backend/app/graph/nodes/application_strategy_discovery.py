@@ -23,34 +23,35 @@ def application_strategy_discovery(state: InstallationState) -> dict:
     if state.get("is_cancelled"):
         return {"status": "CANCELLED"}
         
-    app_name = state.get("application_name")
+    applications = state.get("applications", [])
     os_groups = state.get("os_groups", {})
     strategies = state.get("strategies", {})
     strategy_reused = state.get("strategy_reused", {})
     
-    # Check if we actually need to run discovery
-    if all(strategy_reused.get(sig, False) for sig in os_groups):
-        return {} # All strategies already cached
-        
     broadcast_stage(job_id, agent_name, stage_name, "RUNNING")
-    broadcast_log(job_id, agent_name, f"Discovering installation strategies for {app_name} using AI")
+    broadcast_log(job_id, agent_name, f"Discovering installation strategies using AI")
     
     updates = {
         "strategies": strategies
     }
     
     for sig in os_groups:
-        if strategy_reused.get(sig, False):
-            continue
-            
         parts = sig.split("_")
         os_name = parts[0]
         arch = parts[-1]
         os_version = parts[1] if len(parts) > 2 else ""
         
-        broadcast_log(job_id, agent_name, f"Requesting AI strategy for {app_name} on {sig}")
+        for app in applications:
+            app_name = app.get("name") or app.get("application_name")
+            if not app_name: continue
+            
+            # If strategy already populated by lookup, skip discovery
+            if strategies.get(sig, {}).get(app_name):
+                continue
+            
+            broadcast_log(job_id, agent_name, f"Requesting AI strategy for {app_name} on {sig}")
         
-        prompt = f"""
+            prompt = f"""
 You are an expert system administrator agent. 
 Determine the best way to install, verify, and check the version of the following application:
 Application: {app_name}
@@ -75,49 +76,63 @@ Rules:
 3. For Windows, use completely non-interactive package-manager commands. If using winget, explicitly include --silent --accept-package-agreements --accept-source-agreements. Never require user input or open an interactive GUI.
 """
 
-        try:
-            # LLMService.generate generally expects the prompt directly. We parse JSON from it.
-            response_text = LLMService.generate(prompt, json_mode=True)
+            max_retries = 3
+            success = False
+            last_error = ""
+            current_prompt = prompt
             
-            # Basic cleanup if wrapped in markdown
-            if "```json" in response_text:
-                response_text = response_text.split("```json")[1].split("```")[0].strip()
-            elif "```" in response_text:
-                response_text = response_text.split("```")[1].strip()
-                
-            data = json.loads(response_text)
-            strategy = ApplicationStrategyResponse(**data)
-            
-            # Save to DB cache
-            saved = ApplicationStrategyService.save_strategy(
-                application_name=app_name,
-                operating_system=os_name,
-                os_version=os_version,
-                architecture=arch,
-                package_manager=strategy.package_manager,
-                package_name=strategy.package_name,
-                installation_method=strategy.installation_method,
-                installed_version_command=strategy.installed_version_command,
-                latest_version_command=strategy.latest_version_command,
-                latest_version_source=strategy.latest_version_source,
-                verification_command=strategy.verification_command
-            )
-            
-            updates["strategies"][sig] = {
-                "package_manager": strategy.package_manager,
-                "package_name": strategy.package_name,
-                "installation_method": strategy.installation_method,
-                "installed_version_command": strategy.installed_version_command,
-                "latest_version_command": strategy.latest_version_command,
-                "latest_version_source": strategy.latest_version_source,
-                "verification_command": strategy.verification_command
-            }
-            
-            broadcast_log(job_id, agent_name, f"AI discovered and validated installation strategy for {sig}")
-            
-        except Exception as e:
-            broadcast_log(job_id, agent_name, f"Failed to discover strategy for {sig}: {e}", "error")
-            return {"status": "FAILED"}
+            for attempt in range(max_retries):
+                try:
+                    response_text = LLMService.generate(current_prompt, json_mode=True)
+                    
+                    if "```json" in response_text:
+                        response_text = response_text.split("```json")[1].split("```")[0].strip()
+                    elif "```" in response_text:
+                        response_text = response_text.split("```")[1].strip()
+                        
+                    data = json.loads(response_text)
+                    strategy = ApplicationStrategyResponse(**data)
+                    
+                    saved = ApplicationStrategyService.save_strategy(
+                        application_name=app_name,
+                        operating_system=os_name,
+                        os_version=os_version,
+                        architecture=arch,
+                        package_manager=strategy.package_manager,
+                        package_name=strategy.package_name,
+                        installation_method=strategy.installation_method,
+                        installed_version_command=strategy.installed_version_command,
+                        latest_version_command=strategy.latest_version_command,
+                        latest_version_source=strategy.latest_version_source,
+                        verification_command=strategy.verification_command
+                    )
+                    
+                    if sig not in updates["strategies"]:
+                        updates["strategies"][sig] = {}
+                        
+                    updates["strategies"][sig][app_name] = {
+                        "package_manager": strategy.package_manager,
+                        "package_name": strategy.package_name,
+                        "installation_method": strategy.installation_method,
+                        "installed_version_command": strategy.installed_version_command,
+                        "latest_version_command": strategy.latest_version_command,
+                        "latest_version_source": strategy.latest_version_source,
+                        "verification_command": strategy.verification_command
+                    }
+                    
+                    broadcast_log(job_id, agent_name, f"AI discovered and validated installation strategy for {app_name} on {sig}")
+                    success = True
+                    break
+                    
+                except Exception as e:
+                    last_error = str(e)
+                    broadcast_log(job_id, agent_name, f"JSON parsing failed on attempt {attempt + 1}/{max_retries} for {app_name} on {sig}: {last_error}", "warning")
+                    if attempt < max_retries - 1:
+                        current_prompt = prompt + f"\n\nYOUR PREVIOUS RESPONSE WAS INVALID JSON. Fix this error: {last_error}\nEnsure the JSON string is properly terminated and escaped."
+                    
+            if not success:
+                broadcast_log(job_id, agent_name, f"Failed to discover strategy for {app_name} on {sig} after {max_retries} attempts. Last error: {last_error}", "error")
+                return {"status": "FAILED"}
             
     broadcast_stage(job_id, agent_name, stage_name, "COMPLETED")
     return updates

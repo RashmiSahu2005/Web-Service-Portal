@@ -9,7 +9,8 @@ from app.mail_listener.email_parser import parse_email
 import redis
 
 # Redis client for duplicate protection
-redis_client = redis.Redis.from_url("redis://localhost:6379/0", decode_responses=True)
+redis_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+
 
 def process_email(client: IMAPClient, email_id: bytes, msg):
     parsed = parse_email(msg)
@@ -66,7 +67,23 @@ def polling_loop():
                 logger.info("[EmailListener] Checking mailbox...")
                 emails = client.fetch_unread_emails()
                 
+                # Sort emails into two passes to prevent a race condition:
+                # If an approval reply and the original request arrive in the same poll batch,
+                # the approval would be processed first and permanently dropped (INVALID)
+                # because the original request hasn't been saved to Redis yet.
+                # Solution: always process original requests (no In-Reply-To) BEFORE replies.
+                original_emails = []
+                reply_emails = []
                 for email_id, msg in emails:
+                    parsed_check = parse_email(msg)
+                    if parsed_check.get("in_reply_to"):
+                        reply_emails.append((email_id, msg))
+                    else:
+                        original_emails.append((email_id, msg))
+                
+                ordered_emails = original_emails + reply_emails
+                
+                for email_id, msg in ordered_emails:
                     try:
                         process_email(client, email_id, msg)
                     except Exception as e:

@@ -12,11 +12,16 @@ class EmailState(TypedDict, total=False):
     body: str
     sender: str
     recipient: str
+    requester_email: Optional[str]
     
     # Extracted fields
+    applications: List[dict] # [{"name": str, "version": str, "operation": str}]
+    
+    # Legacy extracted fields (mapped to applications[0] for backward compatibility)
     application_name: Optional[str]
     application_id: Optional[str]
     version: Optional[str]
+    
     target_host_ip: Optional[str]
     host_id: Optional[str]
     ticket_id: Optional[str]

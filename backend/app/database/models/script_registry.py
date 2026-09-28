@@ -7,9 +7,14 @@ class ScriptRegistry(Base):
     
     registry_id = Column(Integer, primary_key=True, index=True)
     application_name = Column(String, index=True)
+    normalized_application_name = Column(String, index=True)
     version = Column(String, index=True)
     operating_system = Column(String)
     architecture = Column(String)
+    
+    filename = Column(String)
+    script_type = Column(String)
+    script_content = Column(String)
     
     fleet_script_id = Column(String)
     script_hash = Column(String)
@@ -19,6 +24,7 @@ class ScriptRegistry(Base):
     risk_reasons = Column(JSON, default=list)
     
     status = Column(String, default="ACTIVE") # ACTIVE, INVALID
+    success_count = Column(Integer, default=0)
     failure_count = Column(Integer, default=0)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())

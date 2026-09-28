@@ -3,7 +3,7 @@ import os
 import sys
 
 if __name__ == '__main__':
-    print("Starting Celery worker for ApplicationHub...")
+    print("Starting Celery worker for DeployIQ...")
     print("Ensure Redis is running (e.g. redis-server) before starting this worker.")
     
     # Run the Celery worker

@@ -11,10 +11,12 @@ def map_to_installation(state: EmailState) -> EmailState:
         
     application_id = state.get("application_id")
     application_name = state.get("application_name")
+    applications = state.get("applications", [{"name": application_name, "version": state.get("version", "Latest")}])
     host_id = state.get("host_id")
     version = state.get("version", "Latest")
+    requester_email = state.get("requester_email")
     
-    if not application_id or not host_id:
+    if not host_id or not applications:
         logger.error("[EmailGraph] Missing required installation variables in state.")
         return {**state, "status": "FAILED", "error_message": "Missing variables for mapping."}
         
@@ -24,8 +26,10 @@ def map_to_installation(state: EmailState) -> EmailState:
             db=db,
             application_id=application_id,
             application_name=application_name,
+            applications=applications,
             host_id=host_id,
-            version=version
+            version=version,
+            requester_email=requester_email
         )
         logger.info(f"[EmailGraph] Successfully created and queued installation job: {job_id}")
         return {

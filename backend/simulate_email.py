@@ -19,8 +19,8 @@ def simulate():
         message_id=msg_id,
         in_reply_to=None,
         references=[],
-        subject="Install Request",
-        body="install brave browser on 192.168.13.106",
+        subject="Installation of software in ip: 192.168.13.106",
+        body="install brave browser and postgresql on 192.168.13.106",
         sender="boss@company.com",
         status="RECEIVED"
     )
@@ -28,7 +28,7 @@ def simulate():
     print(f"\n1. Sending initial request to graph: {initial_state['body']}")
     result = graph.invoke(initial_state)
     print(f"Result Status: {result.get('status')}")
-    print(f"Extracted App: {result.get('application_name')}")
+    print(f"Extracted Apps: {result.get('applications')}")
     print(f"Extracted IP: {result.get('target_host_ip')}")
     
     if result.get("status") != "PENDING_APPROVAL":
@@ -45,13 +45,13 @@ def simulate():
         print("ERROR: Not saved in Redis!")
         return
         
-    # 2. Simulate the approval reply email
+    # 2. Simulate the approval reply email using subject-based fallback
     reply_id = f"reply-{uuid.uuid4()}@test.com"
     reply_state = EmailState(
         message_id=reply_id,
-        in_reply_to=msg_id, # This ties it to the thread!
-        references=[msg_id],
-        subject="Re: Install Request",
+        in_reply_to=None, # Explicitly None to test subject fallback
+        references=[],
+        subject="Re[2]: Installation of software in ip: 192.168.13.106",
         body="Yes, go ahead and install it.",
         sender="admin@company.com",
         status="RECEIVED"
@@ -62,7 +62,7 @@ def simulate():
     print(f"Result Status: {result2.get('status')}")
     
     if result2.get("status") == "APPROVED":
-        print("\nSUCCESS! The email intake graph correctly parsed the request, auto-registered the app, correlated the approval reply, and dispatched it to the installation queue!")
+        print("\nSUCCESS! The email intake graph correctly parsed the multi-app request, correlated the approval reply via subject-based fallback, and dispatched it!")
     else:
         print(f"FAILED TO APPROVE. Error: {result2.get('error_message')}")
 

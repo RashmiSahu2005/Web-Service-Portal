@@ -1,6 +1,6 @@
-# ApplicationHub
+# DeployIQ
 
-ApplicationHub is an intelligent, agentic enterprise software portal (MVP) that allows organizations to seamlessly deploy software to end-user devices. It solves the problem of manual, error-prone software deployment by introducing a self-healing, agentic workflow capable of determining OS types, deciding optimal installation strategies, safely generating idempotent scripts, analyzing them for security risks, and executing them remotely.
+DeployIQ is an intelligent, agentic enterprise software portal (MVP) that allows organizations to seamlessly deploy software to end-user devices. It solves the problem of manual, error-prone software deployment by introducing a self-healing, agentic workflow capable of determining OS types, deciding optimal installation strategies, safely generating idempotent scripts, analyzing them for security risks, and executing them remotely.
 
 The system is "agentic" because it doesn't rely on hard-coded bash scripts for every application. Instead, it utilizes Large Language Models (LLMs) to dynamically discover installation strategies, determine package availability, generate scripts, and detect high-risk behaviors autonomously. 
 
@@ -37,7 +37,42 @@ graph TD
     Cleanup --> Completion[Completion / Notification Node]
 ```
 
-### Components
+### PostgreSQL Database Setup (Required)
+
+DeployIQ uses PostgreSQL as its active database.
+
+1. Install PostgreSQL:
+```bash
+sudo apt update
+sudo apt install postgresql postgresql-contrib
+```
+
+2. Start and enable the service:
+```bash
+sudo systemctl enable postgresql
+sudo systemctl start postgresql
+```
+
+3. Create the database and user:
+```bash
+sudo -u postgres psql
+```
+Inside the `psql` shell, run:
+```sql
+CREATE DATABASE deployiq;
+CREATE USER deployiq_user WITH PASSWORD 'YOUR_STRONG_PASSWORD';
+GRANT ALL PRIVILEGES ON DATABASE deployiq TO deployiq_user;
+\q
+```
+
+4. Configure your `.env` file with the connection string:
+```env
+DATABASE_URL="postgresql+psycopg2://deployiq_user:YOUR_STRONG_PASSWORD@localhost:5432/deployiq"
+```
+
+*(Note: An older SQLite database `deployiq.db` may exist as a backup. A migration script `scripts/sqlite_to_pg.py` is available if you need to migrate old configurations. By default, PostgreSQL starts fresh.)*
+
+### Environment Variables
 - **FastAPI**: Serves the REST API and WebSocket endpoints.
 - **Celery Worker**: Executes the long-running LangGraph process.
 - **LangGraph**: The state machine that controls the conditional flow between agents.
@@ -190,7 +225,7 @@ If a "latest" request misses the Redis cache, the application uses **FastMCP**:
 
 ## Application Strategy System
 
-Instead of relying solely on the LLM to guess how to install an app, ApplicationHub uses an intelligent strategy cache.
+Instead of relying solely on the LLM to guess how to install an app, DeployIQ uses an intelligent strategy cache.
 
 ```mermaid
 graph TD

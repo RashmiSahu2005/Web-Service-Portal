@@ -16,11 +16,23 @@ def installation_script_cleanup(state: InstallationState) -> dict:
     }
     
     fleet_script_ids = state.get("fleet_script_ids", {})
+    script_reused = state.get("script_reused", {})
     
     if not fleet_script_ids:
         broadcast_log(job_id, agent_name, "No temporary scripts found to clean up.")
     
     for sig, script_id in fleet_script_ids.items():
+        if script_reused.get(sig):
+            broadcast_log(job_id, agent_name, f"[{sig}] Script ID {script_id} was reused from registry. Skipping deletion.")
+            updates["installation_script_deleted"][sig] = False
+            continue
+            
+        script_registry_ids = state.get("script_registry_ids", {})
+        if sig in script_registry_ids:
+            broadcast_log(job_id, agent_name, f"[{sig}] Script ID {script_id} was successfully saved to Script Registry. Skipping deletion.")
+            updates["installation_script_deleted"][sig] = False
+            continue
+            
         broadcast_log(job_id, agent_name, f"[{sig}] Deleting FleetDM script ID {script_id}")
         success = FleetDMService.delete_script(int(script_id))
         

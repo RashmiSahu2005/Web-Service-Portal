@@ -3,6 +3,7 @@ from app.graph.email.state import EmailState
 from app.services.application_service import ApplicationService
 from app.services.fleetdm_service import FleetDMService
 from app.database.database import SessionLocal
+import email.utils
 
 def validate_request(state: EmailState) -> EmailState:
     logger.info(f"[EmailGraph] Validating request: {state.get('message_id')}")
@@ -34,11 +35,30 @@ def validate_request(state: EmailState) -> EmailState:
             ApplicationService.add_application(db, app)
             logger.info(f"[EmailGraph] Successfully auto-registered '{app_name}' with ID: {app_id}")
             
-        host_info = FleetDMService.get_host_info(ip_addr)
+        host_info = None
+        
+        if ip_addr:
+            host_info = FleetDMService.get_host_info(ip_addr)
+        
         if not host_info:
-            logger.warning(f"[EmailGraph] Target host IP '{ip_addr}' not found in FleetDM.")
-            return {**state, "status": "INVALID", "error_message": f"Host '{ip_addr}' not found."}
-            
+            # No IP provided or IP not found — try resolving from sender's email/username
+            _, sender_email = email.utils.parseaddr(state.get("sender", ""))
+            if sender_email:
+                # Try the username part (e.g. kousik.naskar from kousik.naskar@ap2l.ai)
+                username = sender_email.split("@")[0]
+                logger.info(f"[EmailGraph] No IP found. Trying host lookup by sender username: '{username}'")
+                host_info = FleetDMService.get_host_info(username)
+                
+            if not host_info:
+                # Still not found — mark as INVALID since we cannot proceed without a host
+                logger.warning(f"[EmailGraph] Could not resolve host for '{ip_addr or sender_email}'. Marking as INVALID.")
+                return {
+                    **state,
+                    "application_id": app.id,
+                    "status": "INVALID",
+                    "error_message": f"Could not determine the target machine. Please send a new request including the IP address."
+                }
+                
         logger.info(f"[EmailGraph] Validation successful. Transitioning to PENDING_APPROVAL.")
         return {
             **state,

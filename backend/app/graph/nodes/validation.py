@@ -12,7 +12,10 @@ def validate_request(state: InstallationState) -> dict:
     broadcast_stage(job_id, agent_name, stage_name, "RUNNING")
     broadcast_log(job_id, agent_name, "Starting validation")
     
-    updates = {"current_stage": "VALIDATION"}
+    updates = {
+        "current_stage": "VALIDATION",
+        "current_app_index": state.get("current_app_index", 0)
+    }
     
     if not state.get("application_name"):
         error_message = "Application name is missing"

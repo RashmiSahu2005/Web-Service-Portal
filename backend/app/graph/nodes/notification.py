@@ -8,43 +8,62 @@ from app.database.database import SessionLocal
 from app.database.repositories.job_repository import job_repo
 
 def _send_email(state: InstallationState, job_id: str, agent_name: str) -> bool:
-    broadcast_log(job_id, agent_name, "Sending installation email")
+    broadcast_log(job_id, agent_name, "Sending installation report email")
     
-    app_name = f"{state.get('application_name')} (v{state.get('version')})"
+    applications = state.get("applications", [])
+    
+    # Calculate overall status
+    success_count = sum(1 for a in applications if a.get("status") in ["SUCCESS", "ALREADY_INSTALLED"])
+    failed_count = sum(1 for a in applications if a.get("status") == "FAILED")
+    
+    if failed_count > 0 and success_count == 0:
+        overall_status = "FAILED"
+    elif failed_count > 0 and success_count > 0:
+        overall_status = "PARTIAL_SUCCESS"
+    else:
+        overall_status = "SUCCESS"
+        
+    if overall_status == "FAILED":
+        broadcast_log(job_id, agent_name, "Installation failed. Skipping failure report email as per user request.")
+        return True
+        
+    summary_lines = []
+    for a in applications:
+        app_name = a.get("name") or a.get("application_name")
+        status_val = a.get("status", "FAILED")
+        summary_lines.append(f"{app_name:<20} - {status_val}")
+        
+    summary_text = "\n".join(summary_lines)
+    
     timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
     
     host_ids = state.get('host_ids')
     hostnames = ", ".join(str(h) for h in host_ids) if host_ids else "N/A"
     
-    recipient_email = "rashmi.sahu@ap2l.ai"
-    
-    status = state.get("status")
-    verification_result = state.get("verification_result")
-    error_message = state.get("error_message")
-    
-    if status == "COMPLETED" and verification_result is True:
-        success, msg = EmailService.send_installation_success(
-            recipient_email=recipient_email,
-            application_name=app_name,
-            status="COMPLETED",
-            timestamp=timestamp,
-            hostname=hostnames
-        )
-    else:
-        # The user requested NOT to send failure emails. Only send if successful.
-        broadcast_log(job_id, agent_name, "Installation failed. Skipping failure email as per user request.")
-        success = True
-        msg = "Skipped failure email"
+    recipient_email = state.get("requester_email")
+    if not recipient_email:
+        broadcast_log(job_id, agent_name, "No requester_email found in state! Cannot send notification.", "error")
+        return False
         
+    success, msg = EmailService.send_multi_app_report(
+        recipient_email=recipient_email,
+        summary_text=summary_text,
+        overall_status=overall_status,
+        timestamp=timestamp,
+        hostname=hostnames
+    )
+    
     if success:
-        broadcast_log(job_id, agent_name, "Email sent successfully")
+        broadcast_log(job_id, agent_name, "Email report sent successfully")
     else:
-        broadcast_log(job_id, agent_name, f"Email failed to send: {msg}", "warning")
+        broadcast_log(job_id, agent_name, f"Email report failed to send: {msg}", "warning")
         
     return success
 
 def _generate_audit_log_content(state: InstallationState, end_time: datetime) -> str:
     started_at = state.get("started_at")
+    if isinstance(started_at, (int, float)):
+        started_at = datetime.fromtimestamp(started_at)
     started_at_str = started_at.strftime("%Y-%m-%d %H:%M:%S UTC") if started_at else "N/A"
     duration = str(end_time - started_at) if started_at else "N/A"
     
@@ -62,14 +81,16 @@ def _generate_audit_log_content(state: InstallationState, end_time: datetime) ->
     app_state_results = ""
     if host_ids:
         for host_id in host_ids:
-            state_val = application_states.get(host_id, "N/A")
-            inst_ver = installed_versions.get(host_id, "N/A")
-            avail_ver = available_versions.get(host_id, "N/A")
-            app_state_results += f"""Host {host_id}:
-    State: {state_val}
-    Installed Version: {inst_ver}
-    Available Version: {avail_ver}
-"""
+            app_state_results += f"Host {host_id}:\n"
+            host_states = application_states.get(host_id, {})
+            host_versions = installed_versions.get(host_id, {})
+            if isinstance(host_states, dict):
+                for app_name, state_val in host_states.items():
+                    inst_ver = host_versions.get(app_name, "N/A")
+                    app_state_results += f"    {app_name}: State={state_val}, Installed={inst_ver}\n"
+            else:
+                app_state_results += f"    State: {host_states}\n"
+
     else:
         app_state_results = "N/A\n"
         
@@ -90,22 +111,22 @@ Host {host_id}:
     verif_overall = "VERIFIED" if verification_result is True else ("FAILED" if verification_result is False else "N/A")
     
     final_status = state.get("status", "UNKNOWN")
+    # DO NOT mutate final_status to FAILED here. Installation succeeded.
     if final_status == "COMPLETED" and verification_result is False:
-        final_status = "FAILED"
+        final_status = "COMPLETED_WITH_VERIFICATION_WARNING"
         
     reason = state.get("error_message") or "N/A"
-    if final_status == "FAILED" and verification_result is False and not state.get("error_message"):
-        reason = "Application Verification failed"
+    if final_status == "COMPLETED_WITH_VERIFICATION_WARNING":
+        reason = "Installation succeeded but verification check failed."
         
     email_status = "Sent" if state.get("email_sent", False) else "Failed/Not Sent"
 
     log_content = f"""============================================================
-APPLICATION HUB INSTALLATION AUDIT
+DEPLOYIQ INSTALLATION AUDIT
 ============================================================
 
 Job ID: {state.get("job_id")}
-Application: {state.get("application_name")}
-Version: {state.get("version")}
+Applications: {", ".join([a.get('name') or a.get('application_name', '') for a in state.get('applications', [])])}
 
 Started At: {started_at_str}
 Completed At: {end_time.strftime("%Y-%m-%d %H:%M:%S UTC")}
@@ -214,16 +235,31 @@ async def send_notification(state: InstallationState) -> dict:
     finally:
         db.close()
 
+    # Calculate overall status
+    applications = state.get("applications", [])
+    success_count = sum(1 for a in applications if a.get("status") in ["SUCCESS", "ALREADY_INSTALLED"])
+    failed_count = sum(1 for a in applications if a.get("status") == "FAILED")
+    
+    if failed_count > 0 and success_count == 0:
+        overall_status = "FAILED"
+    elif failed_count > 0 and success_count > 0:
+        overall_status = "PARTIAL_SUCCESS"
+    else:
+        overall_status = "SUCCESS"
+
     if state.get("status") == "CANCELLED":
         broadcast_log(job_id, agent_name, "Job was cancelled. Skipping email notification.")
         email_sent = False
         updates["email_sent"] = False
         updates["status"] = "CANCELLED"
+        overall_status = "CANCELLED"
     else:
         email_sent = _send_email(state, job_id, agent_name)
         updates["email_sent"] = email_sent
+        updates["status"] = overall_status
     
     temp_state = dict(state)
+    temp_state["status"] = overall_status
     temp_state["email_sent"] = email_sent
     _write_audit_log(temp_state, job_id, agent_name)
     
@@ -247,14 +283,9 @@ async def send_notification(state: InstallationState) -> dict:
     now = datetime.utcnow()
     updates["completed_at"] = now
     
-    # If the workflow finished naturally and verification succeeded but status is still running/pending
-    final_status = state.get("status")
-    if final_status in ["PENDING", "RUNNING"] and state.get("verification_result") is True:
-        updates["status"] = "COMPLETED"
-        
     AgentEventService.broadcast_installation_complete(
         job_id=job_id,
-        status=updates.get("status", final_status),
+        status=overall_status,
         error=updates.get("error_message", state.get("error_message"))
     )
         
