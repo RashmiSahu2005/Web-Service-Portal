@@ -104,6 +104,7 @@ class InstallationState(TypedDict, total=False):
     # Application State Checks
     application_states: dict # host_id -> {app_name: state_str}
     installed_versions: dict # host_id -> {app_name: version_str}
+    latest_versions_from_host: dict # host_id -> {app_name: version_str}
     available_versions: dict # host_id -> {app_name: version_str}
     hosts_requiring_installation: List[int]
     

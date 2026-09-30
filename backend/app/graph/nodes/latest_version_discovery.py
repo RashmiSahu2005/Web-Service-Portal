@@ -105,11 +105,31 @@ def latest_version_discovery(state: InstallationState) -> dict:
         version_check_unavailable = False
         
         cached_data = redis_service.get_latest_version(app_name, os_name, architecture)
+        
+        # Get authoritative latest if available
+        authoritative_latest = None
+        for host_id, host_latest in state.get("latest_versions_from_host", {}).items():
+            if host_latest.get(app_name) and host_latest[app_name] != "null":
+                authoritative_latest = host_latest[app_name]
+                break
+
         if cached_data and cached_data.get("latest_version"):
             discovered_version = cached_data["latest_version"]
-            broadcast_log(job_id, agent_name, f"[{app_name}] Using cached latest version: {discovered_version} (Source: {cached_data.get('source')})")
+            if authoritative_latest:
+                if discovered_version != authoritative_latest:
+                    broadcast_log(job_id, agent_name, f"[{app_name}] Cached candidate {discovered_version} differs from authoritative {authoritative_latest}. Overriding cache.", "warning")
+                    discovered_version = authoritative_latest
+                    redis_service.set_latest_version(app_name, os_name, architecture, {"latest_version": discovered_version, "source": "Package Manager"})
+                else:
+                    broadcast_log(job_id, agent_name, f"[{app_name}] Using cached latest version: {discovered_version} (Validated against package manager)")
+            else:
+                broadcast_log(job_id, agent_name, f"[{app_name}] Using cached latest version: {discovered_version} (Source: {cached_data.get('source')})")
+        elif authoritative_latest:
+            discovered_version = authoritative_latest
+            broadcast_log(job_id, agent_name, f"[{app_name}] Using authoritative version {discovered_version} directly from package manager. Skipping Tavily.")
+            redis_service.set_latest_version(app_name, os_name, architecture, {"latest_version": discovered_version, "source": "Package Manager"})
         else:
-            broadcast_log(job_id, agent_name, f"[{app_name}] Cache missed or expired. Querying Tavily MCP for live web evidence...")
+            broadcast_log(job_id, agent_name, f"[{app_name}] Cache missed and no authoritative package manager version available. Querying Tavily MCP for live web evidence...")
             
             # Find the current version (from the first host that has it)
             current_version = ""
@@ -174,12 +194,37 @@ def latest_version_discovery(state: InstallationState) -> dict:
                     parsed = json.loads(clean_res)
                     
                     if parsed.get("latest_version") and parsed.get("confidence", 0) > 0.6:
-                        discovered_version = parsed["latest_version"]
-                        broadcast_log(job_id, agent_name, f"[{app_name}] Discovered latest version: {discovered_version} from {parsed.get('source_url')}")
+                        candidate_version = parsed["latest_version"]
+                        broadcast_log(job_id, agent_name, f"[{app_name}] LLM Candidate version from web: {candidate_version} from {parsed.get('source_url')}")
+                        
+                        # Validate against authoritative source if available
+                        authoritative_latest = None
+                        for host_id, host_latest in state.get("latest_versions_from_host", {}).items():
+                            if host_latest.get(app_name) and host_latest[app_name] != "null":
+                                authoritative_latest = host_latest[app_name]
+                                break
+                                
+                        if authoritative_latest:
+                            if candidate_version != authoritative_latest:
+                                broadcast_log(job_id, agent_name, f"[{app_name}] Candidate {candidate_version} differs from authoritative package manager {authoritative_latest}. Using authoritative.", "warning")
+                            else:
+                                broadcast_log(job_id, agent_name, f"[{app_name}] Candidate {candidate_version} validated against authoritative source.")
+                            discovered_version = authoritative_latest
+                            parsed["latest_version"] = discovered_version
+                            parsed["source"] = "Package Manager"
+                        else:
+                            discovered_version = candidate_version
+                            
                         redis_service.set_latest_version(app_name, os_name, architecture, parsed)
                     else:
                         broadcast_log(job_id, agent_name, f"[{app_name}] LLM could not confidently determine the latest version from evidence.", "warning")
-                        version_check_unavailable = True
+                        # Fallback to authoritative source if LLM failed
+                        if authoritative_latest:
+                            discovered_version = authoritative_latest
+                            broadcast_log(job_id, agent_name, f"[{app_name}] Using authoritative version {discovered_version} as fallback.")
+                            redis_service.set_latest_version(app_name, os_name, architecture, {"latest_version": discovered_version, "source": "Package Manager"})
+                        else:
+                            version_check_unavailable = True
                         
                 except Exception as e:
                     logger.error(f"[{app_name}] LLM parsing failed: {e}")

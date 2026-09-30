@@ -16,26 +16,36 @@ def _generate_state_check_script(app_strategies: dict, is_windows: bool = False)
         items = list(app_strategies.items())
         for i, (app_name, strategy) in enumerate(items):
             cmd = strategy.get("installed_version_command", [])
+            latest_cmd = strategy.get("latest_version_command", [])
             comma = "," if i < len(items) - 1 else ""
             if not cmd:
-                script.append(f'  echo \'  "{app_name}": {{"installed_raw": null}}{comma}\'')
+                script.append(f'  echo \'  "{app_name}": {{"installed_raw": null, "latest_raw": null, "exit_code": -1}}{comma}\'')
             else:
                 cmd_str = " ".join(cmd)
+                latest_cmd_str = " ".join(latest_cmd) if latest_cmd else ""
                 script.append(f"""
   RAW=$( ({cmd_str}) 2>/dev/null )
   EC=$?
+  LATEST_RAW="null"
+  if [ -n "{latest_cmd_str}" ]; then
+    LRAW=$( ({latest_cmd_str}) 2>/dev/null )
+    LVER=$(echo "$LRAW" | grep -oE '[0-9]+\\.[0-9]+(\\.[0-9]+)*' | head -n1)
+    if [ -n "$LVER" ]; then
+      LATEST_RAW='"'"$LVER"'"'
+    fi
+  fi
+  
   if [ $EC -eq 0 ] && [ -n "$RAW" ]; then
     VERSION=$(echo "$RAW" | grep -oE '[0-9]+\\.[0-9]+(\\.[0-9]+)*' | head -n1)
     if [ -z "$VERSION" ]; then
       VERSION=$(echo "$RAW" | head -n1 | cut -c1-100 | tr -d '"' | tr -d "'")
     fi
-    echo '  "{app_name}": {{"installed_raw": "'"$VERSION"'", "exit_code": 0}}{comma}'
+    echo '  "{app_name}": {{"installed_raw": "'"$VERSION"'", "latest_raw": '"$LATEST_RAW"', "exit_code": 0}}{comma}'
   else
-    # Escaping JSON correctly for null and integer
     if [ $EC -eq 0 ]; then
-      echo '  "{app_name}": {{"installed_raw": null, "exit_code": 0}}{comma}'
+      echo '  "{app_name}": {{"installed_raw": null, "latest_raw": '"$LATEST_RAW"', "exit_code": 0}}{comma}'
     else
-      echo '  "{app_name}": {{"installed_raw": null, "exit_code": '"$EC"'}}{comma}'
+      echo '  "{app_name}": {{"installed_raw": null, "latest_raw": '"$LATEST_RAW"', "exit_code": '"$EC"'}}{comma}'
     fi
   fi
 """)
@@ -44,7 +54,10 @@ def _generate_state_check_script(app_strategies: dict, is_windows: bool = False)
 
     checks = {}
     for app_name, strategy in app_strategies.items():
-        checks[app_name] = strategy.get("installed_version_command", [])
+        checks[app_name] = {
+            "installed_cmd": strategy.get("installed_version_command", []),
+            "latest_cmd": strategy.get("latest_version_command", [])
+        }
         
     checks_json = json.dumps(checks)
     
@@ -64,8 +77,19 @@ def check():
     result = {{}}
     checks = {checks_json}
     
-    for app_name, installed_cmd in checks.items():
-        result[app_name] = {{"installed_raw": None, "exit_code": -1}}
+    for app_name, cmds in checks.items():
+        result[app_name] = {{"installed_raw": None, "latest_raw": None, "exit_code": -1}}
+        installed_cmd = cmds.get("installed_cmd")
+        latest_cmd = cmds.get("latest_cmd")
+        
+        if latest_cmd:
+            try:
+                res_l = subprocess.run(latest_cmd, capture_output=True, text=True, timeout=10)
+                if res_l.returncode == 0:
+                    result[app_name]["latest_raw"] = extract_version(res_l.stdout.strip())
+            except Exception:
+                pass
+                
         if installed_cmd:
             try:
                 res = subprocess.run(installed_cmd, capture_output=True, text=True, timeout=10)
@@ -169,7 +193,9 @@ async def check_application_state(state: InstallationState) -> dict:
     updates = {
         "application_states": {},
         "installed_versions": {},
-        "hosts_requiring_installation": []
+        "latest_versions_from_host": {},
+        "hosts_requiring_installation": [],
+        "applications": state.get("applications", [])
     }
     
     if state.get("status") in ["FAILED", "TIMEOUT", "BLOCKED_HIGH_RISK"]:
@@ -229,6 +255,7 @@ async def check_application_state(state: InstallationState) -> dict:
             res = await _check_on_host(host_id, script_id, job_id, agent_name)
             
             if host_id not in updates["installed_versions"]: updates["installed_versions"][host_id] = {}
+            if host_id not in updates["latest_versions_from_host"]: updates["latest_versions_from_host"][host_id] = {}
             if host_id not in updates["application_states"]: updates["application_states"][host_id] = {}
             
             active_app_name = state.get("application_name")
@@ -239,10 +266,16 @@ async def check_application_state(state: InstallationState) -> dict:
                     
                 app_res = res.get(app_name, {})
                 installed = app_res.get("installed_raw")
+                latest_from_host = app_res.get("latest_raw")
                 exit_code = app_res.get("exit_code", -1)
                 
                 updates["installed_versions"][host_id][app_name] = installed
+                if latest_from_host:
+                    updates["latest_versions_from_host"][host_id][app_name] = latest_from_host
+                    
                 broadcast_log(job_id, agent_name, f"[{app_name}] Installed version: {installed or 'None'} (Exit Code: {exit_code})")
+                if latest_from_host:
+                    broadcast_log(job_id, agent_name, f"[{app_name}] Authoritative latest version from package manager: {latest_from_host}")
                 
                 app_state = "STATE_CHECK_UNAVAILABLE"
                 if not res: # FleetDM execution failed entirely
@@ -255,8 +288,34 @@ async def check_application_state(state: InstallationState) -> dict:
                 else:
                     app_state = "NOT_INSTALLED"
                     
-                # Do not overwrite if already SUCCESS from a previous run or iteration
-                if app.get("status") not in ["SUCCESS", "ALREADY_INSTALLED"]:
+                if app_state == "NOT_INSTALLED" and app.get("operation") == "UPDATE":
+                    app["status"] = "UPDATE_BLOCKED"
+                    app["failure_category"] = "APPLICATION_NOT_INSTALLED"
+                    updates["status"] = "UPDATE_BLOCKED"
+                    
+                    broadcast_log(job_id, agent_name, f"[{app_name}] Update blocked: application is not installed on host {host_id}.", "error")
+                    
+                    try:
+                        from app.services.email_service import EmailService
+                        requester_email = state.get("requester_email")
+                        if requester_email:
+                            email_msg = state.get("email_message", {})
+                            msg_id = email_msg.get("message_id") if isinstance(email_msg, dict) else None
+                            
+                            EmailService.send_update_blocked_email(
+                                recipient_email=requester_email,
+                                application_name=app_name,
+                                hostname=host_id,
+                                in_reply_to=msg_id
+                            )
+                    except Exception as e:
+                        broadcast_log(job_id, agent_name, f"Failed to send update blocked email: {e}", "warning")
+                        
+                    # Skip adding to hosts_requiring_installation so we don't proceed
+                    continue
+                    
+                # Do not overwrite if already SUCCESS or UPDATE_BLOCKED from a previous run or iteration
+                if app.get("status") not in ["SUCCESS", "ALREADY_INSTALLED", "UPDATE_BLOCKED"]:
                     updates["application_states"][host_id][app_name] = app_state
                 
                 if app_state in ["NOT_INSTALLED", "STATE_CHECK_UNAVAILABLE", "CURRENT_VERSION_UNKNOWN"] and host_id not in updates["hosts_requiring_installation"]:

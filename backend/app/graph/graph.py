@@ -152,7 +152,7 @@ from app.graph.nodes.version_decision import version_decision
 
 def route_after_application_state_check(state: InstallationState):
     if _is_cancelled(state): return "notification"
-    if state.get("status") == "FAILED": return "store_application_result"
+    if state.get("status") in ["FAILED", "UPDATE_BLOCKED"]: return "store_application_result"
     return "latest_version_discovery"
 
 def route_after_latest_version_discovery(state: InstallationState):

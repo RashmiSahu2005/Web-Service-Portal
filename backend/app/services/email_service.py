@@ -329,3 +329,48 @@ DeployIQ Update Approval - Approval ID: {approval_id}
         except Exception as e:
             logger.error(f"EmailService: Downgrade User Clarification Email Failed: {e}")
             return (False, str(e))
+
+    @staticmethod
+    def send_update_blocked_email(
+        recipient_email: str,
+        application_name: str,
+        hostname: str,
+        in_reply_to: str = None
+    ):
+        if not settings.SMTP_ENABLED:
+            logger.info("SMTP disabled, skipping update blocked email.")
+            return True, "SMTP disabled"
+
+        subject = f"DeployIQ - Update Blocked: {application_name}"
+        
+        body = (
+            f"Your requested update cannot be performed because {application_name} is not installed on host {hostname}.\n\n"
+            f"Please submit an installation request for this application and approve it in the mail thread.\n\n"
+            f"Status: UPDATE BLOCKED - APPLICATION NOT INSTALLED\n"
+        )
+
+        msg = MIMEMultipart()
+        msg['From'] = settings.SMTP_SENDER_EMAIL
+        msg['To'] = recipient_email
+        msg['Subject'] = subject
+        if in_reply_to:
+            msg['In-Reply-To'] = in_reply_to
+            msg['References'] = in_reply_to
+
+        msg.attach(MIMEText(body, 'plain'))
+        
+        try:
+            server = smtplib.SMTP(settings.SMTP_SERVER, settings.SMTP_PORT)
+            try:
+                server.starttls()
+            except Exception:
+                pass
+            if settings.SMTP_USERNAME and settings.SMTP_PASSWORD:
+                server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+            server.sendmail(settings.SMTP_SENDER_EMAIL, [recipient_email], msg.as_string())
+            server.quit()
+            logger.info("EmailService: Update Blocked Email Sent")
+            return (True, "sent")
+        except Exception as e:
+            logger.error(f"EmailService: Update Blocked Email Failed: {e}")
+            return (False, str(e))

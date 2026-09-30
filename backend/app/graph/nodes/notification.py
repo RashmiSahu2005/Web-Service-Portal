@@ -22,10 +22,6 @@ def _send_email(state: InstallationState, job_id: str, agent_name: str) -> bool:
     else:
         overall_status = "SUCCESS"
         
-    if overall_status == "FAILED":
-        broadcast_log(job_id, agent_name, "Installation failed. Skipping failure report email as per user request.")
-        return True
-        
     summary_lines = []
     for a in applications:
         app_name = a.get("name") or a.get("application_name")
