@@ -39,9 +39,9 @@ class TavilyService:
         """
         query = f"What is the current latest stable release version of {application_name}"
         if os_name and os_name.lower() != "unknown":
-            query += f" for {os_name}"
+            query += f" compatible with {os_name}"
             if architecture and architecture.lower() != "unknown":
-                query += f" {architecture}"
+                query += f" ({architecture} architecture)"
         query += "? "
         
         if current_version:
@@ -71,7 +71,7 @@ class TavilyService:
         Uses Tavily to search for the official installation commands and repository setup 
         for a specific application on a specific OS.
         """
-        query = f"official installation guide terminal commands repository setup for {application_name} on {os_name} linux"
+        query = f"official installation guide terminal commands repository setup for {application_name} compatible with {os_name} linux"
         
         result = search_tavily(query, search_depth="advanced")
 
@@ -94,7 +94,7 @@ class TavilyService:
         Uses Tavily to search for detailed installation facts specifically tailored for script generation.
         """
         query = (
-            f"Find the official installation method for {application_name} on {os_name} {architecture}. "
+            f"Find the official installation method for {application_name} compatible with {os_name} ({architecture} architecture). "
             "Determine latest stable version, official download URL, Linux package format, "
             "installation procedure, required dependencies, installation path, executable path, "
             "non-GUI verification method, and official version/download source."

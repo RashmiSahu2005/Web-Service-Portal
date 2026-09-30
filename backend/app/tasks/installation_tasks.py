@@ -119,7 +119,7 @@ def resume_approved_update(self, approval_request_id: str):
             status="RUNNING",
             requester_email=req.original_requester_email,
             current_app_index=0,
-            operation="UPDATE",
+            operation="DOWNGRADE" if req.approval_reason == "DOWNGRADE_REQUEST" else "UPDATE",
             is_resume_update=True,
             approval_request_id=approval_request_id
         )

@@ -65,7 +65,7 @@ Return ONLY a valid JSON object with exactly these two top-level keys. Do not ne
         {{
             "name": "string",
             "version": "string",
-            "operation": "INSTALL or UPDATE"
+            "operation": "INSTALL, UPDATE, or DOWNGRADE"
         }}
     ],
     "target_host_ip": "string or null"
@@ -73,7 +73,7 @@ Return ONLY a valid JSON object with exactly these two top-level keys. Do not ne
 
 Rules:
 - "applications" is a JSON array of objects. Each object has exactly "name", "version", and "operation".
-- "operation" MUST be explicitly set to either "INSTALL" or "UPDATE". Use "INSTALL" if not explicitly requested as an update.
+- "operation" MUST be explicitly set to either "INSTALL", "UPDATE", or "DOWNGRADE". Use "DOWNGRADE" only if the user explicitly asks to downgrade to an older version.
 - "target_host_ip" is a top-level key, NOT inside applications. It is the IP address from the email, or null if none.
 - If no software is mentioned, return an empty array for applications.
 - Use "latest" for version if not specified.
@@ -111,10 +111,13 @@ Rules:
                 continue  # Skip stray non-object elements
             app_name = (app.get("name") or "").strip()
             if app_name and not (app_name.lower().startswith("in ") or app_name.lower().startswith("on ")):
+                op = app.get("operation", "INSTALL").upper()
+                if op not in ["INSTALL", "UPDATE", "DOWNGRADE"]:
+                    op = "INSTALL"
                 valid_apps.append({
                     "name": app_name,
                     "version": app.get("version", "latest"),
-                    "operation": app.get("operation", "INSTALL").upper()
+                    "operation": op
                 })
 
         if valid_apps:

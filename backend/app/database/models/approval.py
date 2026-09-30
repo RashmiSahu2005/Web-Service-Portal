@@ -15,6 +15,8 @@ class ApprovalRequest(Base):
     original_requester_email = Column(String, nullable=False)
     original_message_id = Column(String, nullable=True)
     original_thread_id = Column(String, nullable=True)
+    admin_message_id = Column(String, nullable=True)
+    
     
     current_version = Column(String, nullable=True)
     target_version = Column(String, nullable=True)

@@ -405,6 +405,21 @@ async def update_job_status(job_id: str, payload: StatusPayload, db: Session = D
     await ws_manager.broadcast_status(job_id, payload.status, payload.step, payload.percentage)
     return {"status": "success"}
 
+@router.get("/jobs/{job_id}/events")
+async def get_job_events(job_id: str):
+    import redis.asyncio as aioredis
+    import json
+    
+    try:
+        redis_client = await aioredis.from_url("redis://localhost:6379/0")
+        events_bytes = await redis_client.lrange(f"installation_history_{job_id}", 0, -1)
+        events = [json.loads(e.decode('utf-8')) for e in events_bytes]
+        await redis_client.close()
+        return {"events": events}
+    except Exception as e:
+        logger.error(f"Error fetching history for {job_id}: {e}")
+        return {"events": []}
+
 @router.get("/jobs/{job_id}", response_model=InstallationStatusResponse)
 def get_job(job_id: str, db: Session = Depends(get_db)):
     return get_installation_status(job_id, db)

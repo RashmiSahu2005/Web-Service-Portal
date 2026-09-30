@@ -88,144 +88,179 @@ export function useInstallationWS(jobId: string): UseInstallationWSReturn {
 
   const ws = useRef<WebSocket | null>(null);
 
+  const processedEventIds = useRef<Set<string>>(new Set());
+
   useEffect(() => {
     if (!jobId) return;
 
-    // Connect to backend WebSocket
-    const wsUrl = `ws://${window.location.hostname}:8000/ws/installation/${jobId}`;
-    ws.current = new WebSocket(wsUrl);
-
-    ws.current.onopen = () => {
-      setIsConnected(true);
-      setError(null);
-    };
-
-    ws.current.onclose = () => {
-      setIsConnected(false);
-    };
-
-    ws.current.onerror = (err) => {
-      console.error('WebSocket error:', err);
-      setError('Connection to backend failed');
-    };
-
-    ws.current.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        const timestamp = new Date().toISOString();
-
-        switch (data.type) {
-          case 'agent_stage':
-            setStages((prev) => ({
-              ...prev,
-              [data.stage]: {
-                stage: data.stage,
-                status: data.status,
-                timestamp: data.timestamp || timestamp,
-              },
-            }));
-            if (data.status === 'RUNNING' && overallStatus === 'PENDING') {
-              setOverallStatus('RUNNING');
-            }
-            break;
-
-          case 'request_summary':
-            setRequestSummary({
-              sender: data.sender,
-              subject: data.subject,
-              applications: data.applications || [],
-            });
-            break;
-
-          case 'log':
-            setLogs((prev) => [
-              ...prev,
-              {
-                id: crypto.randomUUID(),
-                message: data.message,
-                timestamp: timestamp,
-                isError: data.message.toLowerCase().includes('failed') || data.message.toLowerCase().includes('error'),
-              },
-            ]);
-            break;
-
-          case 'application_state_result':
-            setAppState({
-              application_states: data.application_states || {},
-              installed_versions: data.installed_versions || {},
-              available_versions: data.available_versions || {},
-            });
-            break;
-
-          case 'risk_analysis':
-            setRiskAnalysis({
-              risk_score: data.risk_score,
-              risk_level: data.risk_level,
-              risk_reasons: data.risk_reasons || [],
-            });
-            break;
-
-          case 'fleet_execution':
-            setFleetExecution({
-              script_id: data.script_id,
-              execution_ids: data.execution_ids || [],
-              host_ids: data.host_ids || [],
-            });
-            break;
-
-          case 'verification':
-            setVerificationResult({
-              verification_result: data.verification_result,
-              verification_results: data.verification_results || {},
-            });
-            break;
-
-          case 'notification':
-            setNotificationResult({
-              email_sent: data.email_sent,
-              status: data.status,
-            });
-            break;
-
-          case 'research_result':
-            setResearchResult({
-              application: data.application,
-              recommended_method: data.recommended_method,
-              confidence: data.confidence,
-              sources_count: data.sources_count,
-              sources: data.sources || [],
-              warnings: data.warnings || [],
-              attempt: data.attempt,
-            });
-            break;
-
-          case 'installation_complete':
-            setOverallStatus(data.status === 'SUCCESS' ? 'COMPLETED' : 'FAILED');
-            if (data.error) {
-              setError(data.error);
-            }
-            break;
-
-          case 'status':
-            // Legacy/fallback status structure
-            if (data.status === 'FAILED') {
-                setOverallStatus('FAILED');
-            } else if (data.status === 'COMPLETED') {
-                setOverallStatus('COMPLETED');
-            } else if (data.status === 'RUNNING' && overallStatus === 'PENDING') {
-                setOverallStatus('RUNNING');
-            }
-            break;
-            
-          default:
-            console.warn('Unknown event type received:', data);
+    let isMounted = true;
+    
+    // Process a single event
+    const processEvent = (data: any, timestamp: string) => {
+      // Deduplicate
+      if (data.event_id) {
+        if (processedEventIds.current.has(data.event_id)) {
+          return;
         }
-      } catch (err) {
-        console.error('Failed to parse WebSocket message:', err);
+        processedEventIds.current.add(data.event_id);
+      }
+      
+      switch (data.type) {
+        case 'agent_stage':
+          setStages((prev) => ({
+            ...prev,
+            [data.stage]: {
+              stage: data.stage,
+              status: data.status,
+              timestamp: data.timestamp || timestamp,
+            },
+          }));
+          if (data.status === 'RUNNING') {
+            setOverallStatus((prev) => prev === 'PENDING' ? 'RUNNING' : prev);
+          }
+          break;
+
+        case 'request_summary':
+          setRequestSummary({
+            sender: data.sender,
+            subject: data.subject,
+            applications: data.applications || [],
+          });
+          break;
+
+        case 'log':
+          setLogs((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              message: data.message,
+              timestamp: timestamp,
+              isError: data.message.toLowerCase().includes('failed') || data.message.toLowerCase().includes('error'),
+            },
+          ]);
+          break;
+
+        case 'application_state_result':
+          setAppState({
+            application_states: data.application_states || {},
+            installed_versions: data.installed_versions || {},
+            available_versions: data.available_versions || {},
+          });
+          break;
+
+        case 'risk_analysis':
+          setRiskAnalysis({
+            risk_score: data.risk_score,
+            risk_level: data.risk_level,
+            risk_reasons: data.risk_reasons || [],
+          });
+          break;
+
+        case 'fleet_execution':
+          setFleetExecution({
+            script_id: data.script_id,
+            execution_ids: data.execution_ids || [],
+            host_ids: data.host_ids || [],
+          });
+          break;
+
+        case 'verification':
+          setVerificationResult({
+            verification_result: data.verification_result,
+            verification_results: data.verification_results || {},
+          });
+          break;
+
+        case 'notification':
+          setNotificationResult({
+            email_sent: data.email_sent,
+            status: data.status,
+          });
+          break;
+
+        case 'research_result':
+          setResearchResult({
+            application: data.application,
+            recommended_method: data.recommended_method,
+            confidence: data.confidence,
+            sources_count: data.sources_count,
+            sources: data.sources || [],
+            warnings: data.warnings || [],
+            attempt: data.attempt,
+          });
+          break;
+
+        case 'installation_complete':
+          setOverallStatus(data.status === 'SUCCESS' ? 'COMPLETED' : 'FAILED');
+          if (data.error) {
+            setError(data.error);
+          }
+          break;
+
+        case 'status':
+          // Legacy/fallback status structure
+          if (data.status === 'FAILED') {
+              setOverallStatus('FAILED');
+          } else if (data.status === 'COMPLETED') {
+              setOverallStatus('COMPLETED');
+          } else if (data.status === 'RUNNING') {
+              setOverallStatus((prev) => prev === 'PENDING' ? 'RUNNING' : prev);
+          }
+          break;
+          
+        default:
+          console.warn('Unknown event type received:', data);
       }
     };
 
+    // 1. Fetch historical events
+    fetch(`http://${window.location.hostname}:8000/jobs/${jobId}/events`)
+      .then(res => res.json())
+      .then(data => {
+        if (!isMounted) return;
+        if (data.events && Array.isArray(data.events)) {
+          const timestamp = new Date().toISOString();
+          data.events.forEach((evt: any) => processEvent(evt, timestamp));
+        }
+        
+        // 2. Connect to WebSocket for live updates
+        const wsUrl = `ws://${window.location.hostname}:8000/ws/installation/${jobId}`;
+        ws.current = new WebSocket(wsUrl);
+
+        ws.current.onopen = () => {
+          if (!isMounted) return;
+          setIsConnected(true);
+          setError(null);
+        };
+
+        ws.current.onclose = () => {
+          if (!isMounted) return;
+          setIsConnected(false);
+        };
+
+        ws.current.onerror = (err) => {
+          console.error('WebSocket error:', err);
+          if (!isMounted) return;
+          setError('Connection to backend failed');
+        };
+
+        ws.current.onmessage = (event) => {
+          if (!isMounted) return;
+          try {
+            const parsedData = JSON.parse(event.data);
+            const timestamp = new Date().toISOString();
+            processEvent(parsedData, timestamp);
+          } catch (err) {
+            console.error('Failed to parse WebSocket message:', err);
+          }
+        };
+      })
+      .catch(err => {
+        console.error('Failed to fetch historical events:', err);
+      });
+
     return () => {
+      isMounted = false;
       if (ws.current) {
         ws.current.close();
       }

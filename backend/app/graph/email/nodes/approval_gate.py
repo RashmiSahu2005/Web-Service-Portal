@@ -97,29 +97,59 @@ def check_approval_gate(state: EmailState) -> EmailState:
             matches = approval_repo.get_pending_by_thread(db, tid)
             pending_approvals.extend(matches)
             
+        body = state.get("body", "")
+        import re
+        approval_id_match = re.search(r"Approval ID:\s*([a-zA-Z0-9\-]+)", body)
+        if approval_id_match:
+            app_id = approval_id_match.group(1)
+            req = approval_repo.get(db, app_id)
+            if req and req.status == "PENDING" and req not in pending_approvals:
+                pending_approvals.append(req)
+                
         if pending_approvals:
             import email.utils
             _, reply_sender = email.utils.parseaddr(state.get("sender", ""))
             reply_sender = reply_sender.lower() if reply_sender else ""
             
-            if reply_sender != settings.UPDATE_APPROVAL_ADMIN_EMAIL.lower():
-                logger.warning(f"[EmailGraph] Ignoring approval from {reply_sender} - not the admin.")
-                return {**state, "status": "INVALID", "error_message": "Unauthorized approver."}
-                
+            for req in pending_approvals:
+                if req.approval_reason == "DOWNGRADE_REQUEST":
+                    if reply_sender != req.original_requester_email.lower():
+                        logger.warning(f"[EmailGraph] Ignoring downgrade approval from {reply_sender} - not the original requester. Rejecting.")
+                        req.status = "REJECTED"
+                        approval_repo.update(db, req)
+                        return {**state, "status": "REJECTED", "error_message": "REQUESTER_NOT_AUTHORIZED"}
+                else:
+                    if reply_sender != settings.UPDATE_APPROVAL_ADMIN_EMAIL.lower():
+                        logger.warning(f"[EmailGraph] Ignoring approval from {reply_sender} - not the admin. Rejecting.")
+                        req.status = "REJECTED"
+                        approval_repo.update(db, req)
+                        return {**state, "status": "REJECTED", "error_message": "REQUESTER_NOT_AUTHORIZED"}
+
             body = state.get("body", "")
             intent = analyze_approval_intent(body)
             
+            # Check for version in body for downgrade request
+            new_version = None
+            if intent == "NEITHER" and any(req.approval_reason == "DOWNGRADE_REQUEST" for req in pending_approvals):
+                import re
+                version_match = re.search(r'([0-9]+\.[0-9]+(?:\.[0-9]+)*)', body)
+                if version_match:
+                    new_version = version_match.group(1)
+                    intent = "APPROVED" # Treat as approved with a new version
+            
             if intent == "APPROVED":
-                logger.info("[EmailGraph] Admin approved the mid-flight update!")
+                logger.info("[EmailGraph] Mid-flight approval processed!")
                 from app.tasks.installation_tasks import resume_approved_update
                 from datetime import datetime
                 for req in pending_approvals:
                     req.status = "APPROVED"
                     req.approved_by = reply_sender
                     req.approved_at = datetime.utcnow()
+                    if new_version:
+                        req.target_version = new_version
                     approval_repo.update(db, req)
                     resume_approved_update.delay(req.id)
-                return {**state, "status": "APPROVED", "error_message": "Admin mid-flight approval processed."}
+                return {**state, "status": "APPROVED", "error_message": "Mid-flight approval processed."}
             elif intent == "REJECTED":
                 for req in pending_approvals:
                     req.status = "REJECTED"

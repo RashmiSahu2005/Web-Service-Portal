@@ -207,7 +207,8 @@ DeployIQ"""
         planned_action: str,
         risk: str,
         original_requester_email: str,
-        original_message_id: str
+        original_message_id: str,
+        approval_id: str
     ):
         recipient_email = settings.UPDATE_APPROVAL_ADMIN_EMAIL
         if not settings.SMTP_ENABLED:
@@ -231,6 +232,7 @@ Risk:
 {risk}
 
 Original requester: {original_requester_email}
+DeployIQ Update Approval - Approval ID: {approval_id}
 
 To approve:
 Reply APPROVED in this email thread.
@@ -243,6 +245,10 @@ No update will be performed unless an approval is received.
         msg['To'] = recipient_email
         msg['Subject'] = subject
         
+        import email.utils
+        admin_message_id = email.utils.make_msgid(domain="deployiq.local")
+        msg['Message-ID'] = admin_message_id
+
         if original_message_id:
             msg['In-Reply-To'] = original_message_id
             msg['References'] = original_message_id
@@ -260,7 +266,66 @@ No update will be performed unless an approval is received.
             server.sendmail(settings.SMTP_SENDER_EMAIL, [recipient_email], msg.as_string())
             server.quit()
             logger.info("EmailService: Approval Email Sent")
-            return (True, "Email Sent")
+            return (True, admin_message_id)
         except Exception as e:
             logger.error(f"EmailService: Approval Email Failed: {e}")
+            return (False, str(e))
+
+    @staticmethod
+    def send_user_downgrade_request(
+        application_name: str,
+        current_version: str,
+        target_version: str,
+        recipient_email: str,
+        original_message_id: str,
+        approval_id: str
+    ):
+        if not settings.SMTP_ENABLED:
+            logger.info("SMTP disabled, skipping user downgrade email.")
+            return True, "SMTP disabled"
+
+        subject = f"ACTION REQUIRED: Clarification needed for DeployIQ Update - {application_name}"
+        
+        body = f"""DeployIQ detected that the requested update would result in a downgrade.
+
+Current version: {current_version}
+Target/discovered version: {target_version}
+
+No changes were made.
+
+If you want this version installed, reply APPROVE to this email.
+If you want a different version, reply with the exact version you want installed.
+
+DeployIQ Update Approval - Approval ID: {approval_id}
+"""
+
+        msg = MIMEMultipart()
+        msg['From'] = settings.SMTP_SENDER_EMAIL
+        msg['To'] = recipient_email
+        msg['Subject'] = subject
+        
+        import email.utils
+        admin_message_id = email.utils.make_msgid(domain="deployiq.local")
+        msg['Message-ID'] = admin_message_id
+
+        if original_message_id:
+            msg['In-Reply-To'] = original_message_id
+            msg['References'] = original_message_id
+
+        msg.attach(MIMEText(body, 'plain'))
+        
+        try:
+            server = smtplib.SMTP(settings.SMTP_SERVER, settings.SMTP_PORT)
+            try:
+                server.starttls()
+            except Exception:
+                pass
+            if settings.SMTP_USERNAME and settings.SMTP_PASSWORD:
+                server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+            server.sendmail(settings.SMTP_SENDER_EMAIL, [recipient_email], msg.as_string())
+            server.quit()
+            logger.info("EmailService: Downgrade User Clarification Email Sent")
+            return (True, admin_message_id)
+        except Exception as e:
+            logger.error(f"EmailService: Downgrade User Clarification Email Failed: {e}")
             return (False, str(e))

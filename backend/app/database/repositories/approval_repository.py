@@ -7,10 +7,11 @@ class ApprovalRepository:
         return db.query(ApprovalRequest).filter(ApprovalRequest.id == approval_id).first()
         
     def get_pending_by_thread(self, db: Session, thread_id: str) -> List[ApprovalRequest]:
-        # Sometimes email servers change In-Reply-To to message ID, so we check both
+        # Only match the exact message ID of the approval email sent to the admin.
+        # This prevents accidental approvals by replying to the original requester's thread.
         return db.query(ApprovalRequest).filter(
             ApprovalRequest.status == "PENDING",
-            (ApprovalRequest.original_message_id == thread_id) | (ApprovalRequest.original_thread_id == thread_id)
+            ApprovalRequest.admin_message_id == thread_id
         ).all()
 
     def create(self, db: Session, approval: ApprovalRequest) -> ApprovalRequest:

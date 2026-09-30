@@ -110,11 +110,27 @@ def validate_installation_research(state: InstallationState) -> dict:
                         planned_action=f"Uninstall/replace the existing installation and install version {target_version}.",
                         risk="The currently installed application may be temporarily removed during the update. User configuration/data impact, if applicable, must be stated.",
                         original_requester_email=original_requester,
-                        original_message_id=original_message_id
+                        original_message_id=original_message_id,
+                        approval_id=req.id
                     )
                     
                     if success:
-                        broadcast_log(job_id, agent_name, f"Approval request created: {req.id}")
+                        if msg and msg != "SMTP disabled":
+                            req.admin_message_id = msg
+                            approval_repo.update(db, req)
+                            
+                        ui_message = (
+                            f"UPDATE BLOCKED - ADMIN APPROVAL REQUIRED\n"
+                            f"Application: {app_name}\n"
+                            f"Current version: {current_version}\n"
+                            f"Target version: {target_version}\n"
+                            f"Host: {host_id}\n"
+                            f"Risk: The currently installed application may be temporarily removed during the update.\n"
+                            f"Why approval is required: The researched update path requires removal/replacement of the existing installation.\n"
+                            f"Approval status: PENDING\n"
+                            f"Approval request ID: {req.id}"
+                        )
+                        broadcast_log(job_id, agent_name, ui_message, "warning")
                         broadcast_log(job_id, agent_name, "Approval email sent to admin")
                         broadcast_log(job_id, agent_name, "Waiting for admin approval")
                     else:

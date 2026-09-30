@@ -18,8 +18,14 @@ class AgentEventService:
         from app.core.config import settings
 
         try:
+            import uuid
+            payload["event_id"] = str(uuid.uuid4())
             r = redis.Redis(host='localhost', port=6379, db=0)
-            r.publish(f"installation_{job_id}", json.dumps(payload))
+            payload_str = json.dumps(payload)
+            r.publish(f"installation_{job_id}", payload_str)
+            r.rpush(f"installation_history_{job_id}", payload_str)
+            # Expire after 7 days
+            r.expire(f"installation_history_{job_id}", 604800)
         except Exception as e:
             logger.warning(f"Failed to publish to redis for job {job_id}: {e}")
 

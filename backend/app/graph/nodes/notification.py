@@ -12,9 +12,8 @@ def _send_email(state: InstallationState, job_id: str, agent_name: str) -> bool:
     
     applications = state.get("applications", [])
     
-    # Calculate overall status
-    success_count = sum(1 for a in applications if a.get("status") in ["SUCCESS", "ALREADY_INSTALLED"])
-    failed_count = sum(1 for a in applications if a.get("status") == "FAILED")
+    success_count = sum(1 for a in applications if a.get("status") in ["SUCCESS", "ALREADY_INSTALLED", "NO_UPDATE_REQUIRED"])
+    failed_count = sum(1 for a in applications if a.get("status") not in ["SUCCESS", "ALREADY_INSTALLED", "NO_UPDATE_REQUIRED"])
     
     if failed_count > 0 and success_count == 0:
         overall_status = "FAILED"

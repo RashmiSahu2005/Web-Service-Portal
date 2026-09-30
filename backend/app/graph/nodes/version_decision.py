@@ -122,10 +122,63 @@ def version_decision(state: InstallationState) -> dict:
                     application_states.get(host_id, {})[app_name] = state_name
                     broadcast_log(job_id, agent_name, f"[{app_name}] Host {host_id} already satisfies version {actual_target}. Skipping.")
                 elif comparison > 0:
-                    if version_resolution_source in ("latest", "latest_fallback"):
+                    if app.get("operation") != "DOWNGRADE" or version_resolution_source in ("latest", "latest_fallback"):
                         application_states.get(host_id, {})[app_name] = "VERSION_DOWNGRADE_REQUIRES_EXPLICIT_REQUEST"
-                        app["status"] = "FAILED"
+                        app["status"] = "AWAITING_USER_CLARIFICATION"
                         broadcast_log(job_id, agent_name, f"[{app_name}] Host {host_id} has newer version {inst_ver} than target {actual_target}. Downgrade requires explicit request.", "error")
+                        
+                        # Create ApprovalRequest for User Clarification
+                        try:
+                            from app.database.database import SessionLocal
+                            from app.database.repositories.approval_repository import approval_repo
+                            from app.database.models.approval import ApprovalRequest
+                            from app.services.email_service import EmailService
+                            
+                            db = SessionLocal()
+                            try:
+                                # We need original requester's email and message ID
+                                original_requester = state.get("requester_email", "unknown@example.com")
+                                email_message = state.get("email_message")
+                                original_message_id = email_message.get("message_id") if isinstance(email_message, dict) else None
+                                
+                                req = ApprovalRequest(
+                                    job_id=job_id,
+                                    application=app_name,
+                                    host_id=str(host_id),
+                                    hostname=str(host_id),
+                                    original_requester_email=original_requester,
+                                    original_message_id=original_message_id,
+                                    original_thread_id=original_message_id,
+                                    current_version=inst_ver,
+                                    target_version=actual_target,
+                                    approval_reason="DOWNGRADE_REQUEST",
+                                    status="PENDING",
+                                    os_signature="",
+                                    update_strategy=""
+                                )
+                                req = approval_repo.create(db, req)
+                                
+                                success, msg = EmailService.send_user_downgrade_request(
+                                    application_name=app_name,
+                                    current_version=inst_ver,
+                                    target_version=actual_target,
+                                    recipient_email=original_requester,
+                                    original_message_id=original_message_id,
+                                    approval_id=req.id
+                                )
+                                
+                                if success and msg and msg != "SMTP disabled":
+                                    req.admin_message_id = msg
+                                    approval_repo.update(db, req)
+                                    
+                                broadcast_log(job_id, agent_name, f"Downgrade clarification email sent to {original_requester}")
+                                broadcast_log(job_id, agent_name, f"Waiting for user clarification on thread. ID: {req.id}")
+                            finally:
+                                db.close()
+                        except Exception as e:
+                            import traceback
+                            broadcast_log(job_id, agent_name, f"Failed to send downgrade clarification email: {e}", "error")
+                            logger.error(f"Error creating downgrade approval request: {traceback.format_exc()}")
                     else:
                         application_states.get(host_id, {})[app_name] = "DOWNGRADE_REQUESTED"
                         broadcast_log(job_id, agent_name, f"[{app_name}] Host {host_id} explicit downgrade requested (Installed: {inst_ver}, Target: {actual_target})")
@@ -144,8 +197,8 @@ def version_decision(state: InstallationState) -> dict:
                     if host_id not in hosts_requiring: hosts_requiring.append(host_id)
                     app["state"] = "INSTALL_REQUIRED"
                 
-    if active_app and active_app.get("status") == "FAILED":
-        broadcast_stage(job_id, agent_name, stage_name, "FAILED")
+    if active_app and active_app.get("status") in ["FAILED", "AWAITING_USER_CLARIFICATION"]:
+        broadcast_stage(job_id, agent_name, stage_name, "FAILED" if active_app.get("status") == "FAILED" else "BLOCKED")
         return {
             "application_states": application_states,
             "hosts_requiring_installation": [],
