@@ -6,10 +6,19 @@ type ApplicationCardProps = {
 };
 
 export function ApplicationCard({ data }: ApplicationCardProps) {
-  const { appState, overallStatus, fleetExecution } = data;
+  const { appState, overallStatus, fleetExecution, requestSummary } = data;
 
-  // We infer the applications from appState. If null, we just show a generic loading state.
-  if (!appState || Object.keys(appState.application_states).length === 0) {
+  const appNames = new Set<string>();
+  if (appState && appState.application_states) {
+    Object.keys(appState.application_states).forEach(n => appNames.add(n));
+  }
+  if (requestSummary && requestSummary.applications) {
+    requestSummary.applications.forEach(n => appNames.add(n));
+  }
+
+  const appList = Array.from(appNames);
+
+  if (appList.length === 0) {
     return (
       <div className="card">
         <h2 className="card-title">Applications</h2>
@@ -26,23 +35,41 @@ export function ApplicationCard({ data }: ApplicationCardProps) {
       <h2 className="card-title">Application Status</h2>
       
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-        {Object.entries(appState.application_states).map(([appName, state]) => {
-          // If we have an installed version, show it.
-          const installedVersion = appState.installed_versions[appName];
-          const availableVersion = appState.available_versions[appName];
+        {appList.map((appName) => {
+          const state = appState?.application_states[appName] || 'PROCESSING';
+          const installedVersion = appState?.installed_versions[appName];
+          const availableVersion = appState?.available_versions[appName];
           
           let Icon = Clock;
-          let iconColor = 'var(--text-light)';
-          
-          if (overallStatus === 'COMPLETED' || state === 'INSTALLED' || state === 'UP_TO_DATE') {
+          let iconColor = 'var(--primary)';
+          let badgeText = 'Processing...';
+          let badgeClass = 'badge-primary';
+
+          if (state === 'INSTALLED' || state === 'UP_TO_DATE' || state === 'NO_UPDATE_REQUIRED' || state === 'ALREADY_TARGET_VERSION') {
               Icon = CheckCircle2;
               iconColor = 'var(--success)';
-          } else if (overallStatus === 'FAILED') {
+              badgeText = 'Ready / Up to Date';
+              badgeClass = 'badge-success';
+          } else if (overallStatus === 'COMPLETED') {
+              Icon = CheckCircle2;
+              iconColor = 'var(--success)';
+              badgeText = 'Success';
+              badgeClass = 'badge-success';
+          } else if (overallStatus === 'FAILED' || state === 'FAILED' || state === 'UPDATE_BLOCKED') {
               Icon = XCircle;
               iconColor = 'var(--error)';
+              badgeText = state === 'UPDATE_BLOCKED' ? 'Update Blocked' : 'Failed';
+              badgeClass = 'badge-error';
+          } else if (state === 'VERSION_DOWNGRADE_REQUIRES_EXPLICIT_REQUEST') {
+              Icon = XCircle;
+              iconColor = 'var(--error)';
+              badgeText = 'Downgrade Blocked';
+              badgeClass = 'badge-error';
           } else {
               Icon = Clock;
               iconColor = 'var(--primary)';
+              badgeText = 'Running...';
+              badgeClass = 'badge-primary';
           }
 
           return (
@@ -52,8 +79,8 @@ export function ApplicationCard({ data }: ApplicationCardProps) {
                   <Icon size={20} color={iconColor} />
                   <span style={{ fontWeight: 600 }}>{appName}</span>
                 </div>
-                <span className={`badge ${overallStatus === 'COMPLETED' ? 'badge-success' : overallStatus === 'FAILED' ? 'badge-error' : 'badge-primary'}`}>
-                  {overallStatus === 'COMPLETED' ? 'Success' : overallStatus === 'FAILED' ? 'Failed' : 'Installing...'}
+                <span className={`badge ${badgeClass}`}>
+                  {badgeText}
                 </span>
               </div>
               
@@ -62,12 +89,10 @@ export function ApplicationCard({ data }: ApplicationCardProps) {
                     <span style={{ display: 'block', textTransform: 'uppercase', fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-light)' }}>Target Version</span>
                     {availableVersion || 'Latest'}
                  </div>
-                 {installedVersion && (
-                     <div>
-                        <span style={{ display: 'block', textTransform: 'uppercase', fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-light)' }}>Installed Version</span>
-                        {installedVersion}
-                     </div>
-                 )}
+                 <div>
+                    <span style={{ display: 'block', textTransform: 'uppercase', fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-light)' }}>Installed Version</span>
+                    {installedVersion || 'None'}
+                 </div>
               </div>
               
               {fleetExecution && fleetExecution.script_id && (

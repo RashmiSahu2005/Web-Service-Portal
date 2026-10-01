@@ -11,7 +11,22 @@ def _compare_versions(installed: str, target: str) -> int:
     """
     if not installed or not target:
         raise ValueError("Empty version string provided")
+    if str(installed).strip() == str(target).strip():
+        return 0
     try:
+        def parse_tuple(v):
+            clean_str = str(v).strip().lstrip('vV')
+            nums = re.findall(r'\d+', clean_str)
+            return tuple(int(x) for x in nums)
+            
+        t_inst = parse_tuple(installed)
+        t_targ = parse_tuple(target)
+        
+        if t_inst and t_targ:
+            if t_inst > t_targ: return 1
+            elif t_inst == t_targ: return 0
+            else: return -1
+
         def clean(v):
             match = re.search(r'\d+(\.\d+)*', str(v))
             return match.group(0) if match else "0"
@@ -24,7 +39,7 @@ def _compare_versions(installed: str, target: str) -> int:
         else: return -1
     except Exception as e:
         logger.warning(f"Version comparison failed between {installed} and {target}: {e}")
-        if installed == target: return 0
+        if str(installed).strip() == str(target).strip(): return 0
         raise ValueError(f"Could not compare {installed} and {target}")
 
 def version_decision(state: InstallationState) -> dict:

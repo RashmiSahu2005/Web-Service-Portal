@@ -44,6 +44,7 @@ class Settings:
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", os.getenv("OLLAMA_URL", "http://localhost:11434"))
 
     UPDATE_APPROVAL_ADMIN_EMAIL: str = os.getenv("UPDATE_APPROVAL_ADMIN_EMAIL", "rashmi.sahu@ap2l.ai")
+    ADMIN_APPROVAL_EMAIL: str = os.getenv("ADMIN_APPROVAL_EMAIL", os.getenv("UPDATE_APPROVAL_ADMIN_EMAIL", "rashmi.sahu@ap2l.ai"))
 
 
     # Tavily (used only by tavily_service.py for version discovery — not for installation research)

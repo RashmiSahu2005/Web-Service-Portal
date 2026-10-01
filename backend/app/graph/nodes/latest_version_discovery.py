@@ -213,9 +213,22 @@ def latest_version_discovery(state: InstallationState) -> dict:
                             parsed["latest_version"] = discovered_version
                             parsed["source"] = "Package Manager"
                         else:
-                            discovered_version = candidate_version
+                            # Verify candidate version against current installed version to prevent stale web downgrades
+                            def _to_tuple(v):
+                                if not v: return ()
+                                import re
+                                return tuple(int(x) for x in re.findall(r'\d+', str(v).lstrip('vV')))
+                                
+                            cand_tup = _to_tuple(candidate_version)
+                            curr_tup = _to_tuple(current_version)
                             
-                        redis_service.set_latest_version(app_name, os_name, architecture, parsed)
+                            if current_version and cand_tup and curr_tup and cand_tup < curr_tup:
+                                broadcast_log(job_id, agent_name, f"[{app_name}] Candidate version {candidate_version} from web is lower than installed version {current_version}. Rejecting stale web result.", "warning")
+                                discovered_version = None
+                                version_check_unavailable = True
+                            else:
+                                discovered_version = candidate_version
+                                redis_service.set_latest_version(app_name, os_name, architecture, parsed)
                     else:
                         broadcast_log(job_id, agent_name, f"[{app_name}] LLM could not confidently determine the latest version from evidence.", "warning")
                         # Fallback to authoritative source if LLM failed
