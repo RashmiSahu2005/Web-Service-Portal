@@ -35,17 +35,19 @@ def classify_intent(state: EmailState) -> EmailState:
     
     # Fast path: If this is obviously a reply, skip LLM intent classification for a *new* request.
     # It will remain 'RECEIVED' and flow to approval_gate to be processed as a reply.
+    body_text = state.get("body", "").strip()
     is_reply = bool(
         in_reply_to or 
         references or 
         subject.startswith("re:") or 
         subject.startswith("fwd:") or 
         subject.startswith("aw:") or 
-        subject.startswith("wg:")
+        subject.startswith("wg:") or
+        re.search(r'^\s*(approved|approve|approvd|aprove|yes|proceed|go ahead|reject|rejected|no)\b', body_text, re.IGNORECASE)
     )
     
     if is_reply:
-        logger.info("[EmailGraph] Email identified as a reply via headers/subject. Leaving status as RECEIVED for approval_gate.")
+        logger.info("[EmailGraph] Email identified as a reply via headers/subject/body. Leaving status as RECEIVED for approval_gate.")
         return state
 
 
