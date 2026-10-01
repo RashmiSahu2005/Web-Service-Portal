@@ -49,7 +49,8 @@ def latest_version_discovery(state: InstallationState) -> dict:
                     state.get("strategies", {}),
                     state.get("os_groups", {}),
                     job_id,
-                    agent_name
+                    agent_name,
+                    app_name=app_name
                 )
                 
             try:

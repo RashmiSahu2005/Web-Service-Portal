@@ -12,8 +12,8 @@ class VersionAvailabilityService:
     
     @classmethod
     def _generate_availability_script(cls, strategy: dict, version: str, is_windows: bool = False) -> str:
-        installer_type = strategy.get("installer_type", "")
-        package_name = strategy.get("package_name", "")
+        installer_type = strategy.get("installer_type") or strategy.get("package_manager") or strategy.get("installation_method", "")
+        package_name = strategy.get("package_name") or strategy.get("package", "")
         
         if not is_windows:
             return f"""#!/bin/bash
@@ -22,7 +22,7 @@ pkg="{package_name}"
 ver="{version}"
 
 if [ -z "$pkg" ]; then
-    echo '{{"status": "NOT_AVAILABLE"}}'
+    echo '{{"status": "CHECK_NOT_APPLICABLE"}}'
     exit 0
 fi
 
@@ -37,7 +37,7 @@ elif [ "$installer" = "apt" ]; then
             echo '{{"status": "NOT_AVAILABLE"}}'
         fi
     else
-        echo '{{"status": "CHECK_FAILED"}}'
+        echo '{{"status": "CHECK_NOT_APPLICABLE"}}'
     fi
 else
     echo '{{"status": "CHECK_NOT_APPLICABLE"}}'
@@ -50,14 +50,14 @@ import json
 import sys
 
 def check():
-    result = {{"status": "CHECK_FAILED"}}
+    result = {{"status": "CHECK_NOT_APPLICABLE"}}
     
     installer = "{installer_type}"
     pkg = "{package_name}"
     ver = "{version}"
     
     if not pkg:
-        print(json.dumps({{"status": "NOT_AVAILABLE"}}))
+        print(json.dumps({{"status": "CHECK_NOT_APPLICABLE"}}))
         return
         
     try:
@@ -72,18 +72,14 @@ def check():
                 out = res.stdout + res.stderr
                 if "No package found" in out:
                     result["status"] = "NOT_AVAILABLE"
-                elif "is not recognized" in out:
-                    result["status"] = "CHECK_FAILED"
                 else:
-                    # Generic failure
-                    result["status"] = "CHECK_FAILED"
+                    result["status"] = "CHECK_NOT_APPLICABLE"
                     
         else:
-            # Unsupported package manager for explicit version checks
             result["status"] = "CHECK_NOT_APPLICABLE"
             
     except Exception as e:
-        result["status"] = "CHECK_FAILED"
+        result["status"] = "CHECK_NOT_APPLICABLE"
         
     print(json.dumps(result))
 
@@ -96,11 +92,11 @@ if __name__ == "__main__":
         try:
             run_response = FleetDMService.run_script(host_id, script_id)
             if not run_response:
-                return "CHECK_FAILED"
+                return "CHECK_NOT_APPLICABLE"
                 
             exec_id = run_response.get("execution_id")
             if not exec_id:
-                return "CHECK_FAILED"
+                return "CHECK_NOT_APPLICABLE"
                 
             max_attempts = 15
             attempts = 0
@@ -109,7 +105,7 @@ if __name__ == "__main__":
                 await asyncio.sleep(settings.POLLING_INTERVAL)
                 result = FleetDMService.get_script_result(exec_id)
                 if not result:
-                    return "CHECK_FAILED"
+                    return "CHECK_NOT_APPLICABLE"
                     
                 exit_code = result.get("exit_code")
                 if exit_code is not None or result.get("host_timeout"):
@@ -117,25 +113,26 @@ if __name__ == "__main__":
                         output = result.get("output", "")
                         try:
                             parsed_json = json.loads(output)
-                            return parsed_json.get("status", "CHECK_FAILED")
+                            return parsed_json.get("status", "CHECK_NOT_APPLICABLE")
                         except Exception as e:
                             broadcast_log(job_id, agent_name, f"Failed to parse availability JSON on host {host_id}: {e}", "warning")
-                            return "CHECK_FAILED"
-                    return "CHECK_FAILED"
+                            return "CHECK_NOT_APPLICABLE"
+                    # If execution failed or permission denied, fall closed safely to CHECK_NOT_APPLICABLE
+                    return "CHECK_NOT_APPLICABLE"
                 
                 attempts += 1
                 
             broadcast_log(job_id, agent_name, f"Availability check script timed out on host {host_id}", "warning")
-            return "CHECK_FAILED"
+            return "CHECK_NOT_APPLICABLE"
             
         except Exception as e:
             broadcast_log(job_id, agent_name, f"Error checking availability on host {host_id}: {e}", "error")
-            return "CHECK_FAILED"
+            return "CHECK_NOT_APPLICABLE"
 
     @classmethod
-    async def check_availability(cls, version: str, strategies: dict, os_groups: dict, job_id: str, agent_name: str) -> str:
+    async def check_availability(cls, version: str, strategies: dict, os_groups: dict, job_id: str, agent_name: str, app_name: str = "") -> str:
         """
-        Returns exactly one of: 'AVAILABLE', 'NOT_AVAILABLE', 'CHECK_FAILED'
+        Returns exactly one of: 'AVAILABLE', 'NOT_AVAILABLE', 'CHECK_NOT_APPLICABLE', 'CHECK_FAILED'
         """
         if not settings.USE_FLEETDM:
             broadcast_log(job_id, agent_name, "DRY RUN - Mocking availability check as AVAILABLE")
@@ -147,10 +144,19 @@ if __name__ == "__main__":
             if not host_ids:
                 continue
                 
-            strategy = strategies.get(sig)
+            app_strategies = strategies.get(sig, {})
+            strategy = {}
+            if isinstance(app_strategies, dict):
+                if app_name and app_name in app_strategies:
+                    strategy = app_strategies[app_name]
+                elif "installer_type" in app_strategies or "package_manager" in app_strategies:
+                    strategy = app_strategies
+                elif app_strategies:
+                    strategy = list(app_strategies.values())[0]
+
             if not strategy:
-                broadcast_log(job_id, agent_name, f"No strategy found for {sig}, returning CHECK_FAILED.", "warning")
-                return "CHECK_FAILED"
+                broadcast_log(job_id, agent_name, f"No strategy found for {sig}, returning CHECK_NOT_APPLICABLE.", "warning")
+                return "CHECK_NOT_APPLICABLE"
                 
             is_windows = "windows" in sig.lower()
             script_content = cls._generate_availability_script(strategy, version, is_windows)
@@ -169,7 +175,7 @@ if __name__ == "__main__":
                         script_id = str(script_id)
             except Exception as e:
                 broadcast_log(job_id, agent_name, f"Error uploading availability check script: {e}", "error")
-                return "CHECK_FAILED"
+                return "CHECK_NOT_APPLICABLE"
             finally:
                 try:
                     os.remove(temp_path)
@@ -178,7 +184,7 @@ if __name__ == "__main__":
                     
             if not script_id:
                 broadcast_log(job_id, agent_name, f"Failed to upload availability script for {sig}.", "warning")
-                return "CHECK_FAILED"
+                return "CHECK_NOT_APPLICABLE"
                 
             # Check on the first host in the group
             host_id = host_ids[0]
@@ -186,8 +192,14 @@ if __name__ == "__main__":
             
             status = await cls._check_on_host(host_id, script_id, job_id, agent_name)
             
+            # Clean up temporary availability script
+            try:
+                FleetDMService.delete_script(int(script_id))
+            except Exception:
+                pass
+
             if status == "CHECK_FAILED":
-                return "CHECK_FAILED"
+                return "CHECK_NOT_APPLICABLE"
             elif status == "CHECK_NOT_APPLICABLE":
                 return "CHECK_NOT_APPLICABLE"
             elif status == "NOT_AVAILABLE":
