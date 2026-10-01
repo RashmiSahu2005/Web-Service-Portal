@@ -62,9 +62,11 @@ Return ONLY a valid JSON object matching this schema:
 def check_approval_gate(state: EmailState) -> EmailState:
     logger.info(f"[EmailGraph] Checking approval gate for: {state.get('message_id')}")
     
-    # 1. If this is an original request that just got validated, check first if it's actually an approval reply
-    body_intent = analyze_approval_intent(state.get("body", ""))
-    if state.get("status") == "PENDING_APPROVAL" and body_intent not in ["APPROVED", "REJECTED"]:
+    # 1. If this is an original request that just got validated and NOT an approval reply:
+    import re
+    has_approval_keyword = bool(re.search(r'^\s*(approved|approve|approvd|aprove|yes|proceed|go ahead|reject|rejected|no)\b', state.get("body", "").strip(), re.IGNORECASE))
+    
+    if state.get("status") == "PENDING_APPROVAL" and not has_approval_keyword:
         import email.utils
         _, email_addr = email.utils.parseaddr(state.get("sender", ""))
         state["requester_email"] = email_addr if email_addr else state.get("sender")
