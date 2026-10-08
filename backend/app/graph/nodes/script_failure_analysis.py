@@ -111,9 +111,13 @@ def analyze_script_failure(state: InstallationState) -> dict:
         script_id = result.get("script_id")
         
         message   = result.get("message", "")
-        
         sig = next((k for k, v in fleet_script_ids.items() if str(v) == str(script_id)), None)
-        
+        if not sig and result.get("host_id"):
+            h_id = result.get("host_id")
+            sig = next((os_k for os_k, h_list in state.get("os_groups", {}).items() if h_id in h_list), None)
+        if not sig and len(state.get("os_groups", {})) == 1:
+            sig = list(state.get("os_groups", {}).keys())[0]
+
         # Check if fleet stopped it
         is_fleet_timeout = "Fleet stopped the script after 300 seconds" in output or "Fleet stopped the script after 300 seconds" in message
         if timeout or is_fleet_timeout:
@@ -127,7 +131,10 @@ def analyze_script_failure(state: InstallationState) -> dict:
                 if script_reused_map.get(sig, False):
                     registry_id = script_registry_ids.get(sig)
                     if registry_id:
-                        ScriptRegistryService.invalidate_script(registry_id)
+                        if not timeout:
+                            ScriptRegistryService.invalidate_script(registry_id)
+                        else:
+                            broadcast_log(job_id, agent_name, f"[{sig}] Host timeout detected, preserving registry entry {registry_id}.")
                 
                 attempt_num = state.get("current_attempts", {}).get(sig, 1)
                 apps_str = ", ".join(filter(None, [a.get("name") or a.get("application_name") for a in state.get("applications", [])]))
@@ -349,10 +356,15 @@ CRITICAL RULE 4: If the script outputs 'DEPLOYIQ_FAILURE_CATEGORY=ARTIFACT_REQUI
                 last_action = last_context.get("next_action", "INSTALLATION_RESEARCH")
                 
                 if last_action == "FAILED":
-                    has_fatal_failure = True
-                    # Check if it was ARTIFACT_REQUIRED
-                    if last_context.get("failure_category") == "ARTIFACT_REQUIRED":
-                        fatal_category = "ARTIFACT_REQUIRED"
+                    cur_att = updates["current_attempts"].get(sig, 1)
+                    max_att = maximum_attempts.get(sig, MAX_GENERATION_ATTEMPTS)
+                    if cur_att < max_att:
+                        broadcast_log(job_id, agent_name, f"[{sig}] Strategy failed with '{last_context.get('failure_category')}'. Retrying research for alternative strategy (Attempt {cur_att + 1}/{max_att}).", "warning")
+                        has_fatal_failure = False
+                    else:
+                        has_fatal_failure = True
+                        if last_context.get("failure_category") == "ARTIFACT_REQUIRED":
+                            fatal_category = "ARTIFACT_REQUIRED"
                         
                 if last_action != "SCRIPT_GENERATION":
                     all_research_valid = False

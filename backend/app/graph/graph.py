@@ -40,14 +40,17 @@ def _is_cancelled(state: InstallationState):
 
 def route_after_validation(state: InstallationState):
     if _is_cancelled(state): return "notification"
+    if state.get("status") == "FAILED": return "notification"
     return "host_discovery"
 
 def route_after_host_discovery(state: InstallationState):
     if _is_cancelled(state): return "notification"
+    if state.get("status") == "FAILED": return "notification"
     return "os_detection"
 
 def route_after_os_detection(state: InstallationState):
     if _is_cancelled(state): return "notification"
+    if state.get("status") == "FAILED": return "notification"
     return "prepare_current_application"
 
 def prepare_current_application(state: InstallationState) -> dict:
@@ -266,13 +269,24 @@ def store_application_result(state: InstallationState) -> dict:
     
     # Determine the status of the current application
     app_states = state.get("application_states", {})
-    first_host_id = state.get("host_ids", [1])[0]
-    host_state = app_states.get(first_host_id, {}).get(app_name)
+    first_host_id = state.get("host_ids")[0] if state.get("host_ids") else None
+    host_state = app_states.get(first_host_id, {}).get(app_name) if first_host_id is not None else None
     
     app_status = "FAILED"
     inst_status = app.get("installation_status", "UNKNOWN")
-    
-    if inst_status == "SUCCESS" and app.get("verification_status") in ["SUCCESS", "UNKNOWN"]:
+
+    if state.get("status") == "TIMEOUT" or app.get("status") == "TIMEOUT":
+        app_status = "TIMEOUT"
+    elif app.get("status") in ["FAILED", "UPDATE_BLOCKED", "AWAITING_USER_CLARIFICATION"]:
+        # Preserve specific failure_category for clear UI communication
+        app_status = app.get("status")
+    elif app.get("failure_category") in ["VERSION_DETECTION_FAILED", "APPLICATION_NOT_INSTALLED",
+                                          "STATE_CHECK_FAILED", "CURRENT_VERSION_UNKNOWN",
+                                          "LATEST_VERSION_UNVERIFIED", "VERSION_COMPARISON_FAILED",
+                                          "TARGET_VERSION_UNKNOWN"]:
+        # Explicit failure categories must never silently convert to success
+        app_status = "FAILED"
+    elif inst_status == "SUCCESS" and app.get("verification_status") in ["SUCCESS", "UNKNOWN"]:
         app_status = "SUCCESS"
         
         # Cache the successful research strategy
@@ -299,8 +313,21 @@ def store_application_result(state: InstallationState) -> dict:
         except Exception as e:
             broadcast_log(job_id, agent_name, f"Failed to cache research strategy: {e}", "warning")
             
-    elif inst_status == "ALREADY_INSTALLED" or host_state in ["ALREADY_LATEST", "ALREADY_TARGET_VERSION", "NO_UPDATE_REQUIRED"] or state.get("status") == "NO_UPDATE_REQUIRED":
-        app_status = "ALREADY_INSTALLED" if inst_status == "ALREADY_INSTALLED" or (host_state != "NO_UPDATE_REQUIRED" and state.get("status") != "NO_UPDATE_REQUIRED") else "NO_UPDATE_REQUIRED"
+    elif inst_status == "ALREADY_INSTALLED" or (
+            host_state in ["ALREADY_LATEST", "ALREADY_TARGET_VERSION", "NO_UPDATE_REQUIRED"]
+            and app.get("failure_category") not in ["VERSION_DETECTION_FAILED", "APPLICATION_NOT_INSTALLED",
+                                                     "STATE_CHECK_FAILED", "CURRENT_VERSION_UNKNOWN"]
+            and app.get("status") != "FAILED"
+            and state.get("status") != "FAILED"
+        ) or (
+            state.get("status") == "NO_UPDATE_REQUIRED"
+            and app.get("failure_category") not in ["VERSION_DETECTION_FAILED", "APPLICATION_NOT_INSTALLED",
+                                                     "STATE_CHECK_FAILED", "CURRENT_VERSION_UNKNOWN"]
+            and app.get("status") != "FAILED"
+        ):
+        app_status = "ALREADY_INSTALLED" if inst_status == "ALREADY_INSTALLED" or (
+            host_state != "NO_UPDATE_REQUIRED" and state.get("status") != "NO_UPDATE_REQUIRED"
+        ) else "NO_UPDATE_REQUIRED"
         app["installation_status"] = app_status
         if "verification_status" not in app or app["verification_status"] == "UNKNOWN":
             app["verification_status"] = "SUCCESS"

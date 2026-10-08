@@ -22,7 +22,7 @@ fail() {
 
 # 1. Idempotency Check
 if command -v "$PACKAGE_NAME" >/dev/null 2>&1; then
-    CURRENT_VERSION=$( "$PACKAGE_NAME" --version | head -n 1 )
+    CURRENT_VERSION=$( dpkg-query -W -f='${Version}\n' "$PACKAGE_NAME" 2>/dev/null || "$PACKAGE_NAME" --version --no-sandbox 2>/dev/null | head -n 1 )
     if [[ "$CURRENT_VERSION" == *"$REQUIRED_VERSION"* ]]; then
         echo "Application $TARGET_APP version $REQUIRED_VERSION is already installed."
         echo "DEPLOYIQ_RESULT_START"
@@ -78,7 +78,7 @@ if ! command -v "$PACKAGE_NAME" >/dev/null 2>&1; then
     fail "VERIFICATION_FAILURE"
 fi
 
-FINAL_VERSION=$( "$PACKAGE_NAME" --version | head -n 1 )
+FINAL_VERSION=$( dpkg-query -W -f='${Version}\n' "$PACKAGE_NAME" 2>/dev/null || "$PACKAGE_NAME" --version --no-sandbox 2>/dev/null | head -n 1 )
 
 # Note: If the requested version was a specific lock (1.138.0) but apt installs the latest, 
 # we verify if the installed version is at least the required version or matches.

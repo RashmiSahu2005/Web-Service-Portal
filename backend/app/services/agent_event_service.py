@@ -20,7 +20,7 @@ class AgentEventService:
         try:
             import uuid
             payload["event_id"] = str(uuid.uuid4())
-            r = redis.Redis(host='localhost', port=6379, db=0)
+            r = redis.Redis.from_url(settings.REDIS_URL)
             payload_str = json.dumps(payload)
             r.publish(f"installation_{job_id}", payload_str)
             r.rpush(f"installation_history_{job_id}", payload_str)
@@ -109,6 +109,10 @@ class AgentEventService:
         if error:
             payload["error"] = error
         AgentEventService._safe_broadcast(job_id, payload)
+
+    @staticmethod
+    def broadcast_overall_status(job_id: str, status: str, error_message: Optional[str] = None):
+        AgentEventService.broadcast_installation_complete(job_id=job_id, status=status, error=error_message)
 
     @staticmethod
     def broadcast_application_state(job_id: str, application_states: dict, installed_versions: dict, available_versions: dict):

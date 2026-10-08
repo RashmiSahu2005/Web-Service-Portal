@@ -43,8 +43,9 @@ class Settings:
     LLM_MODEL: str = os.getenv("LLM_MODEL", "")
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", os.getenv("OLLAMA_URL", "http://localhost:11434"))
 
-    UPDATE_APPROVAL_ADMIN_EMAIL: str = os.getenv("UPDATE_APPROVAL_ADMIN_EMAIL", "rashmi.sahu@ap2l.ai")
-    ADMIN_APPROVAL_EMAIL: str = os.getenv("ADMIN_APPROVAL_EMAIL", os.getenv("UPDATE_APPROVAL_ADMIN_EMAIL", "rashmi.sahu@ap2l.ai"))
+    ADMIN_APPROVAL_EMAILS: list = [e.strip().lower() for e in os.getenv("ADMIN_APPROVAL_EMAIL", os.getenv("UPDATE_APPROVAL_ADMIN_EMAIL", "")).split(",") if e.strip()]
+    # Keep legacy string for backward compatibility where a single string is expected
+    ADMIN_APPROVAL_EMAIL: str = ADMIN_APPROVAL_EMAILS[0] if ADMIN_APPROVAL_EMAILS else ""
 
 
     # Tavily (used only by tavily_service.py for version discovery — not for installation research)
@@ -88,6 +89,10 @@ class Settings:
 
     # Mock / dry-run settings (only used when USE_FLEETDM=false)
     MOCK_HOST_ID: int = int(os.getenv("MOCK_HOST_ID", "1"))
+    MOCK_BATTERY_LEVEL: int = int(os.getenv("MOCK_BATTERY_LEVEL", "100"))
+    MOCK_HOST_OS: str = os.getenv("MOCK_HOST_OS", "Ubuntu")
+    MOCK_HOST_ARCH: str = os.getenv("MOCK_HOST_ARCH", "amd64")
+    MOCK_HOST_VERSION: str = os.getenv("MOCK_HOST_VERSION", "22.04 LTS")
 
 settings = Settings()
 

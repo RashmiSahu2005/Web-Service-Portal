@@ -6,7 +6,7 @@ from app.graph.nodes.script_validation import validate_script
 from app.graph.nodes.risk_analysis import analyze_risk
 from app.graph.nodes.fleet_execution import execute_fleet
 from app.graph.nodes.monitoring import monitor_execution
-from app.graph.nodes.script_cleanup import installation_script_cleanup
+from app.graph.nodes.installation_script_cleanup import installation_script_cleanup
 from app.graph.nodes.script_failure_analysis import analyze_script_failure
 from app.graph.nodes.notification import send_notification
 from app.graph.graph import (
@@ -28,15 +28,51 @@ def create_resume_update_graph():
     
     def resume_update_validation(state: InstallationState):
         from app.graph.nodes.utils import broadcast_log
+        from app.services.fleetdm_service import FleetDMService
+        from app.core.config import settings
+        from app.database.database import SessionLocal
+        from app.database.repositories.approval_repository import approval_repo
+        
         job_id = state.get("job_id", "")
         agent_name = "ResumeUpdateValidation"
-        broadcast_log(job_id, agent_name, "Re-evaluating target state after approval...")
+        broadcast_log(job_id, agent_name, "Re-evaluating target host and approval state after authorization...")
+
+        # 1. Re-check FleetDM host enrollment
+        host_ids = state.get("host_ids", [])
+        if not host_ids:
+            broadcast_log(job_id, agent_name, "No target host specified for approved update.", "error")
+            return {"status": "FAILED", "failure_category": "HOST_NOT_FOUND_IN_FLEET"}
         
-        app = state.get("applications", [])[0]
-        host_id = state.get("host_ids", [])[0]
+        host_id = host_ids[0]
+        if settings.USE_FLEETDM:
+            host_info = FleetDMService.verify_host_enrolled(str(host_id))
+            if not host_info:
+                broadcast_log(job_id, agent_name, f"Host {host_id} is no longer enrolled in FleetDM.", "error")
+                return {"status": "FAILED", "failure_category": "HOST_NOT_FOUND_IN_FLEET"}
+
+        # 2. Re-check approval record in database
+        db = SessionLocal()
+        try:
+            approvals = approval_repo.get_by_job_id(db, job_id) if hasattr(approval_repo, "get_by_job_id") else []
+            if not approvals:
+                # Query all approvals for job
+                from app.database.models.approval import ApprovalRequest
+                approvals = db.query(ApprovalRequest).filter(ApprovalRequest.job_id == job_id).all()
+            if approvals and all(a.status != "APPROVED" for a in approvals):
+                broadcast_log(job_id, agent_name, "Approval is no longer valid or was revoked. Halting execution.", "error")
+                return {"status": "FAILED", "failure_category": "APPROVAL_REVOKED"}
+        finally:
+            db.close()
+
+        # 3. Re-check installed application/version
+        apps = state.get("applications", [])
+        if not apps:
+            return {"status": "FAILED", "failure_category": "APPLICATION_NOT_FOUND"}
+            
+        app = apps[0]
         installed = state.get("installed_versions", {}).get(host_id, {}).get(app.get("name"))
         
-        if installed == app.get("target_version"):
+        if installed and installed == app.get("target_version"):
             broadcast_log(job_id, agent_name, "Target version is already installed! No update needed.")
             return {"status": "NO_UPDATE_REQUIRED"}
             

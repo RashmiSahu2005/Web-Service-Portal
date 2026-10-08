@@ -81,7 +81,7 @@ def validate_installation_research(state: InstallationState) -> dict:
                 # Create an ApprovalRequest for each host in this OS group
                 for host_id in os_groups.get(sig, []):
                     current_version = state.get("installed_versions", {}).get(host_id, {}).get(app_name, "Unknown")
-                    original_requester = state.get("requester_email", "unknown@example.com")
+                    original_requester = state.get("requester_email") or ""
                     original_message_id = state.get("original_message_id", "")
                     original_thread_id = state.get("original_thread_id", "")
                     

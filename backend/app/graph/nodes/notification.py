@@ -21,6 +21,10 @@ def _send_email(state: InstallationState, job_id: str, agent_name: str) -> bool:
         overall_status = "PARTIAL_SUCCESS"
     else:
         overall_status = "SUCCESS"
+
+    if overall_status != "SUCCESS":
+        broadcast_log(job_id, agent_name, f"Overall status is {overall_status} (not SUCCESS). Suppressing notification email.", "info")
+        return False
         
     summary_lines = []
     for a in applications:

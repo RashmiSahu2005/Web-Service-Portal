@@ -147,7 +147,7 @@ Constraints:
     APPLICATION={app_name}
     INSTALLATION_STATUS=SUCCESS
     VERIFICATION_STATUS=SUCCESS
-    INSTALLED_VERSION=<actual version>
+    INSTALLED_VERSION=<actual version>  # On Debian/Ubuntu prefer: dpkg-query -W -f='${{Version}}\n' <package> 2>/dev/null || <binary> --version --no-sandbox
     DEPLOYIQ_RESULT_END
     exit 0
 

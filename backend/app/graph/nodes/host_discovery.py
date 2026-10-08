@@ -1,4 +1,3 @@
-import socket
 from app.graph.state import InstallationState
 from app.services.fleetdm_service import FleetDMService
 from app.core.config import settings
@@ -16,8 +15,9 @@ def discover_hosts(state: InstallationState) -> dict:
     updates = {"current_stage": "HOST_DISCOVERY"}
     
     if not settings.USE_FLEETDM:
-        broadcast_log(job_id, agent_name, "FleetDM is disabled. Mocking host discovery.")
-        updates["host_ids"] = [settings.MOCK_HOST_ID]
+        broadcast_log(job_id, agent_name, "FleetDM is disabled. Using configured mock host.")
+        mock_id = settings.MOCK_HOST_ID
+        updates["host_ids"] = [mock_id]
         
         broadcast_log(job_id, agent_name, f"Hosts discovered: {updates['host_ids']}")
         AgentEventService.broadcast_host_info(
@@ -28,44 +28,71 @@ def discover_hosts(state: InstallationState) -> dict:
         broadcast_stage(job_id, agent_name, stage_name, "COMPLETED")
         return updates
 
-    # Check if a specific host_id was already requested (from API/frontend)
-    # The default fallback is [1], so if it's not [1] and not empty, use it.
+    # FleetDM is the absolute source of truth for hosts
     existing_host_ids = state.get("host_ids", [])
-    if existing_host_ids and str(existing_host_ids[0]) != "1":
-        requested_id = str(existing_host_ids[0])
-        broadcast_log(job_id, agent_name, f"Using explicitly requested host ID: {requested_id}")
-        updates["host_ids"] = [requested_id]
-        
-        # Try to get actual hostname from FleetDM for the UI/logs
-        try:
-            host_info = FleetDMService.get_host_info(requested_id)
-            hostname = host_info.get("hostname", f"Host-{requested_id}")
-        except Exception:
-            hostname = f"Host-{requested_id}"
-            
-        AgentEventService.broadcast_host_info(
-            job_id=job_id,
-            host_ids=updates["host_ids"],
-            hostname=hostname
-        )
-        broadcast_stage(job_id, agent_name, stage_name, "COMPLETED")
-        return updates
+    requested_host = None
+    if existing_host_ids:
+        requested_host = str(existing_host_ids[0]).strip()
+    elif state.get("host_id"):
+        requested_host = str(state.get("host_id")).strip()
 
-    # Default discovery (backend machine)
-    hostname = socket.gethostname()
-    broadcast_log(job_id, agent_name, f"Discovering host ID for backend hostname: {hostname}")
-    
-    host_id = FleetDMService.find_host(hostname)
-    
-    if not host_id:
-        error_message = f"Could not discover FleetDM host ID for {hostname}"
+    if not requested_host or requested_host in ("dynamic", "none", "null"):
+        error_message = "No target host specified in request. A target host or IP must be provided."
         broadcast_log(job_id, agent_name, error_message, "error")
         broadcast_stage(job_id, agent_name, stage_name, "FAILED")
-        return {**updates, "status": "FAILED", "error_message": error_message}
         
-    updates["host_ids"] = [host_id]
-    broadcast_log(job_id, agent_name, f"Hosts discovered: {updates['host_ids']}")
-    
+        requester_email = state.get("requester_email")
+        if requester_email:
+            from app.services.email_service import EmailService
+            EmailService.send_host_not_found_email(
+                recipient_email=requester_email,
+                requested_host="unspecified host"
+            )
+        return {
+            **updates,
+            "status": "FAILED",
+            "failure_category": "HOST_NOT_FOUND_IN_FLEET",
+            "error_message": error_message
+        }
+
+    broadcast_log(job_id, agent_name, f"Verifying requested target host '{requested_host}' in FleetDM...")
+    host_info = FleetDMService.verify_host_enrolled(requested_host)
+
+    if not host_info:
+        error_message = (
+            f"The requested host '{requested_host}' was not found in FleetDM. "
+            f"No installation/update was performed. "
+            f"Please verify that the host is enrolled in FleetDM."
+        )
+        broadcast_log(job_id, agent_name, error_message, "error")
+        broadcast_stage(job_id, agent_name, stage_name, "FAILED")
+
+        # Notify original requester immediately
+        requester_email = state.get("requester_email")
+        if requester_email:
+            from app.services.email_service import EmailService
+            email_msg = state.get("email_message", {})
+            in_reply_to = email_msg.get("message_id") if isinstance(email_msg, dict) else None
+            EmailService.send_host_not_found_email(
+                recipient_email=requester_email,
+                requested_host=requested_host,
+                in_reply_to=in_reply_to
+            )
+
+        return {
+            **updates,
+            "status": "FAILED",
+            "failure_category": "HOST_NOT_FOUND_IN_FLEET",
+            "error_message": error_message
+        }
+
+    resolved_host_id = int(host_info.get("id"))
+    hostname = host_info.get("hostname", f"Host-{resolved_host_id}")
+
+    broadcast_log(job_id, agent_name, f"Successfully verified host '{requested_host}' in FleetDM (ID: {resolved_host_id}, Hostname: {hostname})")
+    updates["host_ids"] = [resolved_host_id]
+    updates["hostname"] = hostname
+
     AgentEventService.broadcast_host_info(
         job_id=job_id,
         host_ids=updates["host_ids"],

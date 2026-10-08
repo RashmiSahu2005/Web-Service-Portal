@@ -7,6 +7,7 @@ from app.services.fleetdm_service import FleetDMService
 from app.services.script_registry_service import ScriptRegistryService
 from app.core.config import settings
 from app.graph.nodes.utils import broadcast_stage, broadcast_log
+from app.utils.version_utils import clean_version_string, app_matches, compare_canonical_versions, is_newer_version
 
 async def monitor_execution(state: InstallationState) -> dict:
     job_id = state.get("job_id", "")
@@ -177,14 +178,36 @@ async def monitor_execution(state: InstallationState) -> dict:
                     if not parsed_app_name:
                         parsed_app_name = active_app_name
 
+                    matched_any = False
                     for app in applications:
-                        if (app.get("name") == parsed_app_name or app.get("application_name") == parsed_app_name) and app.get("state") == "INSTALL_REQUIRED":
-                            if parsed_app_name == active_app_name:
+                        this_app_name = app.get("name") or app.get("application_name")
+                        if (app_matches(this_app_name, parsed_app_name) or len(applications) == 1) and app.get("state") == "INSTALL_REQUIRED":
+                            matched_any = True
+                            app["installation_status"] = parsed_inst_status
+                            app["verification_status"] = parsed_verif_status
+                            if "pre_update_canonical_version" not in app:
+                                app["pre_update_canonical_version"] = app.get("canonical_installed_version") or app.get("installed_version")
+                            if parsed_version and parsed_version.strip() and parsed_version.strip().lower() not in ("null", "none", "unknown"):
+                                cleaned_v = clean_version_string(parsed_version) or parsed_version.strip()
+                                app["installed_version"] = cleaned_v
+                                app["post_update_version"] = cleaned_v
+                                app["canonical_installed_version"] = cleaned_v
+                            broadcast_log(job_id, agent_name, f"[{this_app_name or parsed_app_name}] Install: {parsed_inst_status}, Verify: {parsed_verif_status}")
+
+                    if not matched_any and active_app_name:
+                        for app in applications:
+                            this_app_name = app.get("name") or app.get("application_name")
+                            if app_matches(this_app_name, active_app_name) and app.get("state") == "INSTALL_REQUIRED":
                                 app["installation_status"] = parsed_inst_status
                                 app["verification_status"] = parsed_verif_status
-                                if parsed_version:
-                                    app["installed_version"] = parsed_version
-                                broadcast_log(job_id, agent_name, f"[{parsed_app_name}] Install: {parsed_inst_status}, Verify: {parsed_verif_status}")
+                                if "pre_update_canonical_version" not in app:
+                                    app["pre_update_canonical_version"] = app.get("canonical_installed_version") or app.get("installed_version")
+                                if parsed_version and parsed_version.strip() and parsed_version.strip().lower() not in ("null", "none", "unknown"):
+                                    cleaned_v = clean_version_string(parsed_version) or parsed_version.strip()
+                                    app["installed_version"] = cleaned_v
+                                    app["post_update_version"] = cleaned_v
+                                    app["canonical_installed_version"] = cleaned_v
+                                broadcast_log(job_id, agent_name, f"[{this_app_name or active_app_name}] Install: {parsed_inst_status}, Verify: {parsed_verif_status}")
                 elif "DEPLOYIQ_INSTALL_RESULT:" in output:
                     result_block = output.split("DEPLOYIQ_INSTALL_RESULT:")[1].strip()
                     for line in result_block.split("\n"):
@@ -192,39 +215,93 @@ async def monitor_execution(state: InstallationState) -> dict:
                             parsed_app_name, parsed_status = line.split("=", 1)
                             parsed_app_name = parsed_app_name.strip()
                             parsed_status = parsed_status.strip().upper()
+                            matched_any = False
                             for app in applications:
-                                if (app.get("name") == parsed_app_name or app.get("application_name") == parsed_app_name) and app.get("state") == "INSTALL_REQUIRED":
-                                    if parsed_app_name == active_app_name:
+                                this_app_name = app.get("name") or app.get("application_name")
+                                if (app_matches(this_app_name, parsed_app_name) or len(applications) == 1) and app.get("state") == "INSTALL_REQUIRED":
+                                    matched_any = True
+                                    app["installation_status"] = parsed_status
+                                    broadcast_log(job_id, agent_name, f"[{this_app_name or parsed_app_name}] Installation status updated to {parsed_status}")
+                            if not matched_any and active_app_name:
+                                for app in applications:
+                                    this_app_name = app.get("name") or app.get("application_name")
+                                    if app_matches(this_app_name, active_app_name) and app.get("state") == "INSTALL_REQUIRED":
                                         app["installation_status"] = parsed_status
-                                        broadcast_log(job_id, agent_name, f"[{parsed_app_name}] Installation status updated to {parsed_status}")
+                                        broadcast_log(job_id, agent_name, f"[{this_app_name or active_app_name}] Installation status updated to {parsed_status}")
                 else:
                     # Fallback if block is missing
                     fallback_status = "SUCCESS" if exit_code == 0 else "FAILED"
                     for app in applications:
-                        if (app.get("name") or app.get("application_name")) == active_app_name:
+                        this_app_name = app.get("name") or app.get("application_name")
+                        if app_matches(this_app_name, active_app_name) or len(applications) == 1:
                             app["installation_status"] = fallback_status
                             app["verification_status"] = "UNKNOWN"
-                            broadcast_log(job_id, agent_name, f"[{app.get('name')}] Installation status fallback to {fallback_status}")
+                            broadcast_log(job_id, agent_name, f"[{this_app_name}] Installation status fallback to {fallback_status}")
                             
                 pending_executions.remove(exec_id)
 
         if pending_executions:
             await asyncio.sleep(polling_interval)
 
-    # Determine overall status
-    install_required_apps = [a for a in applications if a.get("state") == "INSTALL_REQUIRED"]
-    success_count = sum(1 for a in install_required_apps if a.get("installation_status") in ["SUCCESS", "ALREADY_INSTALLED"] and a.get("verification_status") in ["SUCCESS", "UNKNOWN", "ALREADY_INSTALLED"])
-    failed_count = sum(1 for a in install_required_apps if a.get("installation_status") in ["FAILED", "FAILURE"] or a.get("verification_status") in ["FAILED", "FAILURE"])
+    # Perform post-update version verification for active app
+    active_app_name = state.get("application_name")
+    active_app = next((a for a in applications if app_matches(a.get("name") or a.get("application_name"), active_app_name)), None)
+    if not active_app and len(applications) == 1:
+        active_app = applications[0]
     
-    if failed_count > 0 and success_count == 0:
+    if active_app and active_app.get("state") == "INSTALL_REQUIRED":
+        post_installed_ver = active_app.get("post_update_version")
+        target_ver = active_app.get("target_version")
+        canonical_before = active_app.get("pre_update_canonical_version") or active_app.get("canonical_installed_version")
+        
+        if post_installed_ver and target_ver:
+            target_reached = compare_canonical_versions(post_installed_ver, target_ver) >= 0
+            is_newer_than_before = bool(canonical_before and is_newer_version(post_installed_ver, canonical_before))
+            
+            if target_reached or is_newer_than_before:
+                active_app["verification_status"] = "SUCCESS"
+                active_app["status"] = "UPDATE_SUCCESS" if active_app.get("operation") == "UPDATE" else "SUCCESS"
+                broadcast_log(job_id, agent_name, f"[{active_app_name}] Post-update verification SUCCESS: detected version {post_installed_ver} on host (Target: {target_ver}, Previous: {canonical_before}).")
+            else:
+                if active_app.get("operation") == "INSTALL":
+                    # For fresh installs, if we detected ANY version, it was successfully installed (even if it's an older repo version)
+                    active_app["verification_status"] = "SUCCESS_VERSION_MISMATCH"
+                    active_app["status"] = "SUCCESS"
+                    broadcast_log(job_id, agent_name, f"[{active_app_name}] Installation SUCCESS, but version mismatch: installed {post_installed_ver} vs target {target_ver}.", "warning")
+                else:
+                    active_app["verification_status"] = "FAILED"
+                    active_app["status"] = "UPDATE_VERIFICATION_FAILED"
+                    broadcast_log(job_id, agent_name, f"[{active_app_name}] Post-update verification FAILED: installed version {post_installed_ver} did not reach target {target_ver} (Previous: {canonical_before}).", "error")
+        elif active_app.get("verification_status") == "SUCCESS" and active_app.get("installation_status") == "SUCCESS":
+            active_app["status"] = "UPDATE_SUCCESS" if active_app.get("operation") == "UPDATE" else "SUCCESS"
+            if target_ver:
+                active_app["installed_version"] = target_ver
+                active_app["canonical_installed_version"] = target_ver
+            broadcast_log(job_id, agent_name, f"[{active_app_name}] Post-execution verification SUCCESS via script verification.")
+        elif active_app.get("operation") == "UPDATE":
+            active_app["verification_status"] = "FAILED"
+            active_app["status"] = "UPDATE_VERIFICATION_FAILED"
+            broadcast_log(job_id, agent_name, f"[{active_app_name}] Post-update verification FAILED: installed version after update could not be verified.", "error")
+
+    # Determine overall status - prioritize installation success over verification failure
+    install_required_apps = [a for a in applications if a.get("state") == "INSTALL_REQUIRED"]
+    success_count = sum(1 for a in install_required_apps if a.get("installation_status") in ["SUCCESS", "ALREADY_INSTALLED"])
+    failed_count = sum(1 for a in install_required_apps if a.get("installation_status") in ["FAILED", "FAILURE"] or (a.get("verification_status") in ["FAILED", "FAILURE"] and a.get("installation_status") not in ["SUCCESS", "ALREADY_INSTALLED"]))
+    
+    has_timeout = any(r.get("host_timeout") for r in updates["execution_results"].values())
+    
+    if has_timeout:
+        overall_status = "TIMEOUT"
+        broadcast_log(job_id, agent_name, "Overall deployment TIMEOUT (monitoring timed out).", "error")
+    elif failed_count > 0 and success_count == 0:
         overall_status = "FAILED"
-        broadcast_log(job_id, agent_name, "Overall deployment FAILED (all applications failed to install).", "error")
+        broadcast_log(job_id, agent_name, "Overall deployment FAILED (all applications failed to install/verify).", "error")
     elif failed_count > 0 and success_count > 0:
         overall_status = "PARTIAL_SUCCESS"
         broadcast_log(job_id, agent_name, "Overall deployment PARTIAL_SUCCESS (some applications failed, some succeeded).", "warning")
     else:
         overall_status = "SUCCESS"
-        broadcast_log(job_id, agent_name, "Overall deployment SUCCESS (all applications installed successfully).")
+        broadcast_log(job_id, agent_name, "Overall deployment SUCCESS (all applications installed and verified successfully).")
         
     # Register successful new scripts
     script_reused_map = state.get("script_reused", {})
@@ -250,7 +327,9 @@ async def monitor_execution(state: InstallationState) -> dict:
             if sig_success:
                 # Also ensure the app didn't report a VERIFICATION failure in the payload
                 active_app_name = state.get("application_name")
-                active_app = next((a for a in applications if (a.get("name") == active_app_name or a.get("application_name") == active_app_name)), {})
+                active_app = next((a for a in applications if app_matches(a.get("name") or a.get("application_name"), active_app_name)), {})
+                if not active_app and len(applications) == 1:
+                    active_app = applications[0]
                 verification_failed = active_app.get("verification_status") in ["FAILED", "FAILURE"]
                 
                 if verification_failed:
@@ -264,9 +343,11 @@ async def monitor_execution(state: InstallationState) -> dict:
                         os_name, arch = sig.split("_")
                         
                         active_app_name = state.get("application_name")
-                        active_app = next((a for a in applications if (a.get("name") == active_app_name or a.get("application_name") == active_app_name)), {})
+                        active_app = next((a for a in applications if app_matches(a.get("name") or a.get("application_name"), active_app_name)), {})
+                        if not active_app and len(applications) == 1:
+                            active_app = applications[0]
                         
-                        combined_app_name = active_app_name
+                        combined_app_name = active_app.get("name") or active_app_name
                         combined_version = active_app.get("installed_version") or active_app.get("target_version") or active_app.get("version", "latest")
                         
                         script_type = current_script_types.get(sig, ".py")

@@ -23,6 +23,12 @@ def process_email(client: IMAPClient, email_id: bytes, msg):
         return
     
     sender = parsed.get("sender", "Unknown")
+    
+    if "Mail Delivery Subsystem" in sender or "mailer-daemon" in sender.lower() or "postmaster" in sender.lower():
+        logger.info(f"[EmailListener] Ignoring automated bounce/delivery email from {sender}")
+        client.mark_as_read(email_id)
+        return
+        
     logger.info(f"[EmailListener] Processing email event from: {sender} (Message-ID: {message_id})")
     
     from app.graph.email.graph import create_email_intake_graph

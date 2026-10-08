@@ -17,24 +17,27 @@ class ScriptRegistryService:
         return s.strip('_')
 
     @staticmethod
+    def _get_name_candidates(application_name: str) -> list:
+        norm = ScriptRegistryService.normalize_application_name(application_name)
+        candidates = {norm, norm.replace('_', ''), norm.replace('_', '-')}
+        for suffix in ('_browser', '_desktop', '_stable', '_client', '_community'):
+            if norm.endswith(suffix):
+                candidates.add(norm[:-len(suffix)])
+        for prefix in ('google_', 'mozilla_', 'microsoft_'):
+            if norm.startswith(prefix):
+                candidates.add(norm[len(prefix):])
+        if 'code' in norm or 'visual_studio' in norm or 'vs' in norm:
+            candidates.add('vscode')
+            candidates.add('code')
+        return [c for c in candidates if c]
+
+    @staticmethod
     def get_canonical_name(application_name: str) -> str:
         """
-        Resolves a user-provided application name to its canonical identity using a controlled alias map.
+        Resolves a user-provided application name to its normalized identity.
         """
-        norm = ScriptRegistryService.normalize_application_name(application_name)
-        
-        canonical_map = {
-            "brave": "brave",
-            "brave_browser": "brave",
-            "google_chrome": "chrome",
-            "chrome": "chrome",
-            "vs_code": "vscode",
-            "visual_studio_code": "vscode",
-            "mozilla_firefox": "firefox",
-            "firefox": "firefox"
-        }
-        
-        return canonical_map.get(norm, norm)
+        candidates = ScriptRegistryService._get_name_candidates(application_name)
+        return candidates[0] if candidates else ScriptRegistryService.normalize_application_name(application_name)
         
     @staticmethod
     def generate_filename(application_name: str, version: str, script_type: str) -> str:
@@ -79,18 +82,17 @@ class ScriptRegistryService:
     @staticmethod
     def find_compatible_script(application_name: str, version: str, operating_system: str, architecture: str):
         """Exact-version lookup. Returns None if not found."""
-        norm_app = ScriptRegistryService.normalize_application_name(application_name)
-        canonical_name = ScriptRegistryService.get_canonical_name(application_name)
+        candidates = ScriptRegistryService._get_name_candidates(application_name)
 
         logger.info(
-            f"[ScriptResolver] DB query: norm_app IN [{repr(canonical_name)}, {repr(norm_app)}], "
+            f"[ScriptResolver] DB query: candidates IN {candidates}, "
             f"version={repr(version)}, os={repr(operating_system)}, arch={repr(architecture)}"
         )
 
         db: Session = SessionLocal()
         try:
             script = db.query(ScriptRegistry).filter(
-                ScriptRegistry.normalized_application_name.in_([canonical_name, norm_app]),
+                ScriptRegistry.normalized_application_name.in_(candidates),
                 ScriptRegistry.version == version,
                 ScriptRegistry.operating_system == operating_system,
                 ScriptRegistry.architecture == architecture,
@@ -109,13 +111,12 @@ class ScriptRegistryService:
     @staticmethod
     def find_latest_compatible_script(application_name: str, operating_system: str, architecture: str):
         """Returns the newest ACTIVE script for the application regardless of version."""
-        norm_app = ScriptRegistryService.normalize_application_name(application_name)
-        canonical_name = ScriptRegistryService.get_canonical_name(application_name)
+        candidates = ScriptRegistryService._get_name_candidates(application_name)
 
         db: Session = SessionLocal()
         try:
             script = db.query(ScriptRegistry).filter(
-                ScriptRegistry.normalized_application_name.in_([canonical_name, norm_app]),
+                ScriptRegistry.normalized_application_name.in_(candidates),
                 ScriptRegistry.operating_system == operating_system,
                 ScriptRegistry.architecture == architecture,
                 ScriptRegistry.status == "ACTIVE"
@@ -128,7 +129,7 @@ class ScriptRegistryService:
                 )
             else:
                 logger.info(
-                    f"[ScriptResolver] No ACTIVE script found for {canonical_name} "
+                    f"[ScriptResolver] No ACTIVE script found for {candidates} "
                     f"on {operating_system}/{architecture}."
                 )
 

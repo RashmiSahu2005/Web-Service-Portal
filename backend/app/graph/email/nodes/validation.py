@@ -36,30 +36,44 @@ def validate_request(state: EmailState) -> EmailState:
             logger.info(f"[EmailGraph] Successfully auto-registered '{app_name}' with ID: {app_id}")
             
         host_info = None
+        requested_target = ip_addr
         
         if ip_addr:
-            host_info = FleetDMService.get_host_info(ip_addr)
+            host_info = FleetDMService.verify_host_enrolled(ip_addr)
         
         if not host_info:
-            # No IP provided or IP not found — try resolving from sender's email/username
+            # If no IP was extracted or not found, try username
             _, sender_email = email.utils.parseaddr(state.get("sender", ""))
             if sender_email:
-                # Try the username part (e.g. kousik.naskar from kousik.naskar@ap2l.ai)
                 username = sender_email.split("@")[0]
-                logger.info(f"[EmailGraph] No IP found. Trying host lookup by sender username: '{username}'")
-                host_info = FleetDMService.get_host_info(username)
+                logger.info(f"[EmailGraph] Trying host verification by sender username: '{username}'")
+                host_info = FleetDMService.verify_host_enrolled(username)
+                if not requested_target:
+                    requested_target = username
                 
             if not host_info:
-                # Still not found — mark as INVALID since we cannot proceed without a host
-                logger.warning(f"[EmailGraph] Could not resolve host for '{ip_addr or sender_email}'. Marking as INVALID.")
+                # Host NOT found in FleetDM — structured failure and email to requester
+                target_desc = requested_target or (sender_email if sender_email else "unknown host")
+                logger.warning(f"[EmailGraph] Requested host '{target_desc}' NOT found/enrolled in FleetDM. Failing with HOST_NOT_FOUND_IN_FLEET.")
+                
+                requester_email = sender_email or state.get("requester_email")
+                if requester_email:
+                    from app.services.email_service import EmailService
+                    EmailService.send_host_not_found_email(
+                        recipient_email=requester_email,
+                        requested_host=str(target_desc),
+                        in_reply_to=state.get("message_id")
+                    )
+                
                 return {
                     **state,
                     "application_id": app.id,
-                    "status": "INVALID",
-                    "error_message": f"Could not determine the target machine. Please send a new request including the IP address."
+                    "status": "HOST_NOT_FOUND_IN_FLEET",
+                    "failure_category": "HOST_NOT_FOUND_IN_FLEET",
+                    "error_message": f"The requested host {target_desc} was not found in FleetDM. No installation/update was performed."
                 }
                 
-        logger.info(f"[EmailGraph] Validation successful. Transitioning to PENDING_APPROVAL.")
+        logger.info(f"[EmailGraph] Validation successful. Enrolled host verified: ID={host_info.get('id')}. Transitioning to PENDING_APPROVAL.")
         return {
             **state,
             "application_id": app.id,

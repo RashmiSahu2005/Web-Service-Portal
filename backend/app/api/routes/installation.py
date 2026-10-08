@@ -14,7 +14,6 @@ import asyncio
 from datetime import datetime
 from app.core.config import settings
 from app.core.logger import logger
-import socket
 
 router = APIRouter()
 
@@ -75,157 +74,16 @@ class ConnectionManager:
 ws_manager = ConnectionManager()
 readiness_cache: Dict[str, dict] = {}
 
-async def simulate_installation_progress(job_id: str):
-    await asyncio.sleep(1)
-    db = SessionLocal()
-    try:
-        job = job_repo.get(db, job_id)
-        if job:
-            job_repo.update(db, db_obj=job, obj_in={"status": "RUNNING"})
-
-        app_name = "Unknown Application"
-        recipient_email = "rashmi.sahu@ap2l.ai" # Default for testing
-        if job:
-            app = ApplicationService.get_application(db, job.application_id)
-            if app:
-                app_name = app.name
-
-        # List of all UI steps
-        steps = [
-            'Request Received',
-            'User Validation',
-            'Device Validation',
-            'Battery Validation',
-            'Disk Validation',
-            'Dependency Validation',
-            'Package Validation',
-            'Download Package',
-            'Verify Checksum',
-            'Installation',
-            'Post Installation Validation'
-        ]
-
-        total_steps = len(steps) + 2 # +2 for Email and Completed
-
-        for i, step in enumerate(steps):
-            percentage = int(((i + 1) / total_steps) * 100)
-            await ws_manager.broadcast_status(job_id, "RUNNING", step, percentage)
-            await ws_manager.broadcast_log(job_id, f"Executing: {step}...")
-            await asyncio.sleep(0.5)
-
-        # Email Notification Step
-        step = 'Email Notification'
-        percentage = int(((len(steps) + 1) / total_steps) * 100)
-        await ws_manager.broadcast_status(job_id, "RUNNING", step, percentage)
-        await ws_manager.broadcast_log(job_id, f"Executing: {step}...")
-        
-        email_success, email_msg = EmailService.send_installation_success(
-            recipient_email=recipient_email,
-            application_name=app_name,
-            status="COMPLETED",
-            timestamp=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
-            hostname="local"
-        )
-        await ws_manager.broadcast_log(job_id, email_msg)
-        
-        await asyncio.sleep(0.5)
-
-        # Completed Step
-        if job:
-            job_repo.update(db, db_obj=job, obj_in={"status": "COMPLETED"})
-        await ws_manager.broadcast_status(job_id, "COMPLETED", "Completed", 100)
-        await ws_manager.broadcast_log(job_id, "Installation completed successfully.")
-        log_repo.create(db, obj_in={"job_id": job_id, "message": "Installation completed successfully."})
-        
-        
-        # Clean up cache
-        if job_id in readiness_cache:
-            del readiness_cache[job_id]
-            
-    finally:
-        db.close()
-
-async def fleetdm_polling_progress(job_id: str, execution_id: str, app_name: str, recipient_email: str, hostname: str):
-    db = SessionLocal()
-    try:
-        job = job_repo.get(db, job_id)
-        if job:
-            job_repo.update(db, db_obj=job, obj_in={"status": "RUNNING"})
-            
-        await ws_manager.broadcast_status(job_id, "RUNNING", "Installation", 50)
-        await ws_manager.broadcast_log(job_id, f"Polling FleetDM for execution {execution_id}...")
-        
-        while True:
-            await asyncio.sleep(settings.POLLING_INTERVAL)
-            result = FleetDMService.get_script_result(execution_id)
-            
-            if not result:
-                await ws_manager.broadcast_log(job_id, "Failed to get script result from FleetDM.")
-                if job: job_repo.update(db, db_obj=job, obj_in={"status": "FAILED"})
-                await ws_manager.broadcast_status(job_id, "FAILED", "Completed", 100)
-                break
-                
-            exit_code = result.get("exit_code")
-            output = result.get("output", "")
-            
-            # Broadcast output if not empty
-            if output:
-                await ws_manager.broadcast_log(job_id, output)
-                
-            if exit_code is not None or result.get("host_timeout"):
-                if exit_code == 0:
-                    status = "COMPLETED"
-                else:
-                    status = "FAILED"
-                    
-                if job: job_repo.update(db, db_obj=job, obj_in={"status": status})
-                
-                await ws_manager.broadcast_status(job_id, status, "Completed", 100)
-                await ws_manager.broadcast_log(job_id, f"Script execution finished with exit code {exit_code}.")
-                log_repo.create(db, obj_in={"job_id": job_id, "message": f"Execution finished with exit code {exit_code}. Output: {output}"})
-                
-                step = 'Email Notification'
-                await ws_manager.broadcast_status(job_id, status, step, 100)
-                await ws_manager.broadcast_log(job_id, f"Executing: {step}...")
-                
-                if status == "COMPLETED":
-                    email_success, email_msg = EmailService.send_installation_success(
-                        recipient_email=recipient_email,
-                        application_name=app_name,
-                        status="COMPLETED",
-                        timestamp=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
-                        hostname=hostname
-                    )
-                else:
-                    email_success, email_msg = EmailService.send_installation_failure(
-                        recipient_email=recipient_email,
-                        application_name=app_name,
-                        status="FAILED",
-                        timestamp=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
-                        hostname=hostname,
-                        reason=f"Exit code: {exit_code}"
-                    )
-                await ws_manager.broadcast_log(job_id, email_msg)
-                break
-                
-    except Exception as e:
-        logger.error(f"Error in fleetdm_polling_progress: {e}")
-    finally:
-        # Clean up cache
-        if job_id in readiness_cache:
-            del readiness_cache[job_id]
-        db.close()
-
 @router.post("/hosts/identify", response_model=IdentifyHostResponse)
 async def identify_host(req: IdentifyHostRequest):
     if not settings.USE_FLEETDM:
         return IdentifyHostResponse(
-            host_id=191,
+            host_id=settings.MOCK_HOST_ID,
             hostname="mocked-host",
             ip_address=req.ip_address,
-            operating_system="Windows",
-            os_version="11",
-            architecture="x64"
+            operating_system=settings.MOCK_HOST_OS,
+            os_version=settings.MOCK_HOST_VERSION,
+            architecture=settings.MOCK_HOST_ARCH
         )
         
     host_info = FleetDMService.get_host_info(req.ip_address)
@@ -262,7 +120,7 @@ async def identify_host(req: IdentifyHostRequest):
     )
 
 @router.post("/install/{application_id}", response_model=InstallResponse)
-async def request_installation(application_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def request_installation(application_id: str, background_tasks: BackgroundTasks, host: Optional[str] = None, db: Session = Depends(get_db)):
     app = ApplicationService.get_application(db, application_id)
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
@@ -270,10 +128,11 @@ async def request_installation(application_id: str, background_tasks: Background
     job_id = f"job_{str(uuid.uuid4())[:8]}"
     
     if settings.USE_FLEETDM:
-        hostname = socket.gethostname()
-        host_info = FleetDMService.get_host_info(hostname)
+        if not host:
+            raise HTTPException(status_code=400, detail="Target host must be specified when FleetDM is enabled.")
+        host_info = FleetDMService.verify_host_enrolled(host)
         if not host_info:
-            raise HTTPException(status_code=500, detail=f"FleetDM Host '{hostname}' not found.")
+            raise HTTPException(status_code=400, detail=f"FleetDM Host '{host}' not found or not enrolled.")
             
         host_id = host_info.get("id")
         
@@ -325,18 +184,25 @@ async def start_installation(job_id: str, request: StartInstallRequest = None, d
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
 
+    # Resolve target host strictly
+    target_host = request.host_id if request and request.host_id else (job.host_id if job.host_id and job.host_id not in ("dynamic", "local", "none", "null") else None)
+    if not target_host and not settings.USE_FLEETDM:
+        target_host = str(settings.MOCK_HOST_ID)
+
+    if not target_host:
+        raise HTTPException(status_code=400, detail="Missing required host_id. A target host must be specified.")
+
     # Create and queue the Celery execution via reusable service method
     from app.services.installation_service import InstallationService
     InstallationService.create_and_start_installation(
         db=db,
         application_id=app.id,
         application_name=app.name,
-        host_id=request.host_id if request and request.host_id else str(1),
+        host_id=target_host,
         version=app.version or "Latest",
         job_id=job_id
     )
 
-    
     return {"status": "QUEUED", "job_id": job_id, "message": "Installation job queued successfully"}
 
 @router.post("/install/{job_id}/cancel")
@@ -411,7 +277,7 @@ async def get_job_events(job_id: str):
     import json
     
     try:
-        redis_client = await aioredis.from_url("redis://localhost:6379/0")
+        redis_client = await aioredis.from_url(settings.REDIS_URL)
         events_bytes = await redis_client.lrange(f"installation_history_{job_id}", 0, -1)
         events = [json.loads(e.decode('utf-8')) for e in events_bytes]
         await redis_client.close()
@@ -434,7 +300,7 @@ async def websocket_installation_endpoint(websocket: WebSocket, job_id: str):
     import redis.asyncio as aioredis
     import json
     
-    redis_client = await aioredis.from_url("redis://localhost:6379/0")
+    redis_client = await aioredis.from_url(settings.REDIS_URL)
     pubsub = redis_client.pubsub()
     await pubsub.subscribe(f"installation_{job_id}")
     

@@ -9,7 +9,7 @@ REPO_FILE="/etc/apt/sources.list.d/vscode.list"
 
 echo "Checking if VS Code is already installed..."
 if command -v code >/dev/null 2>&1; then
-    CURRENT_VERSION=$(code --version | head -n 1)
+    CURRENT_VERSION=$(dpkg-query -W -f='${Version}\n' code 2>/dev/null || code --version --no-sandbox 2>/dev/null | head -n 1)
     echo "VS Code is already installed: $CURRENT_VERSION"
     # As per constraint 11, we do not fail on slight version mismatches if installed.
     echo "DEPLOYIQ_RESULT_START"
@@ -40,7 +40,7 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y code
 
 echo "Verifying installation..."
 if dpkg-query -W -f='${Status}' code 2>/dev/null | grep -q "ok installed"; then
-    INSTALLED_VERSION=$(code --version | head -n 1 || echo "unknown")
+    INSTALLED_VERSION=$(dpkg-query -W -f='${Version}\n' code 2>/dev/null || code --version --no-sandbox 2>/dev/null | head -n 1)
     echo "Installation successful: $INSTALLED_VERSION"
     
     echo "DEPLOYIQ_RESULT_START"

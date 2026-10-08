@@ -88,6 +88,58 @@ class FleetDMService:
             return None
 
     @staticmethod
+    def verify_host_enrolled(host_identifier: str):
+        """
+        Verify that a host is enrolled and available in FleetDM.
+        Checks exact match on host ID, hostname, or primary IP.
+        Never guesses or falls back.
+        """
+        if not host_identifier:
+            return None
+
+        clean_id = str(host_identifier).strip()
+
+        # 1. If numeric, check by host ID directly
+        if clean_id.isdigit():
+            host = FleetDMService.get_host_by_id(int(clean_id))
+            if host:
+                return host
+
+        # 2. Query FleetDM hosts by hostname or IP query
+        url = f"{settings.FLEET_BASE_URL}/api/v1/fleet/hosts?query={clean_id}"
+        try:
+            response = requests.get(
+                url,
+                headers=FleetDMService._get_headers(),
+                timeout=10,
+            )
+            if response.status_code != 200:
+                logger.warning(f"FleetDMService: verify_host_enrolled returned status {response.status_code}")
+                return None
+            data = response.json()
+            hosts = data.get("hosts", [])
+            for h in hosts:
+                # Exact match against hostname, primary IP, or host ID
+                if (
+                    str(h.get("hostname", "")).lower() == clean_id.lower()
+                    or str(h.get("primary_ip", "")).lower() == clean_id.lower()
+                    or str(h.get("id", "")) == clean_id
+                ):
+                    logger.info(f"FleetDMService: Verified enrolled host '{clean_id}' -> FleetDM ID {h.get('id')}")
+                    return h
+
+            if len(hosts) == 1:
+                h = hosts[0]
+                if clean_id.lower() in str(h.get("hostname", "")).lower() or clean_id in str(h.get("primary_ip", "")):
+                    return h
+
+            logger.warning(f"FleetDMService: Host '{clean_id}' was not found/enrolled in FleetDM.")
+            return None
+        except requests.exceptions.RequestException as e:
+            logger.exception(f"FleetDMService: Error verifying host '{clean_id}': {e}")
+            return None
+
+    @staticmethod
     def get_host_by_id(host_id: int):
         logger.info(f"FleetDMService: Getting host info for ID '{host_id}'")
 

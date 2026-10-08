@@ -34,7 +34,7 @@ class InstallationService:
             application_name=application_name,
             version=version,
             applications=applications,
-            host_ids=[int(host_id)] if str(host_id).isdigit() else [1],
+            host_ids=[int(host_id)] if str(host_id).isdigit() else ([str(host_id)] if host_id else []),
             requester_email=requester_email
         )
         return job_id

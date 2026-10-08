@@ -88,6 +88,25 @@ class TavilyService:
                 
         return "\n\n".join(evidence) if evidence else "No evidence found via MCP."
 
+    @staticmethod
+    def _fetch_page_text(url: str, max_chars: int = 4000) -> str:
+        if not url or any(k in url.lower() for k in ["youtube.com", "youtu.be", "twitter.com", "x.com"]):
+            return ""
+        import re
+        try:
+            with httpx.Client(timeout=6.0, follow_redirects=True) as client:
+                resp = client.get(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+                if resp.status_code == 200:
+                    text = resp.text
+                    clean = re.sub(r'<script.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
+                    clean = re.sub(r'<style.*?</style>', '', clean, flags=re.DOTALL | re.IGNORECASE)
+                    clean = re.sub(r'<[^>]+>', ' ', clean)
+                    clean = re.sub(r'\s+', ' ', clean).strip()
+                    return clean[:max_chars]
+        except Exception:
+            pass
+        return ""
+
     @classmethod
     def get_detailed_installation_evidence(cls, application_name: str, os_name: str, architecture: str, failure_context: str = "") -> str:
         """
@@ -113,6 +132,12 @@ class TavilyService:
                 evidence.append(f"Tavily Answer: {result['answer']}")
                 
             for idx, res in enumerate(result.get("results", [])[:5]):
-                evidence.append(f"Source {idx + 1}: {res.get('url')}\nContent: {res.get('content')}")
+                u = res.get("url", "")
+                c = res.get("content", "")
+                evidence.append(f"Source {idx + 1}: {u}\nContent: {c}")
+                if idx < 3 and any(k in u.lower() for k in ["linux", "install", "download", "docs", "setup", "github.com"]):
+                    doc_snippet = cls._fetch_page_text(u, max_chars=3500)
+                    if doc_snippet and len(doc_snippet) > len(c):
+                        evidence.append(f"Full Documentation Page Extract ({u}):\n{doc_snippet}")
                 
         return "\n\n".join(evidence) if evidence else "No evidence found via MCP."

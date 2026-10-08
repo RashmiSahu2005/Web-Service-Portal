@@ -9,38 +9,8 @@ def _compare_versions(installed: str, target: str) -> int:
     """
     Returns 1 if installed > target, 0 if equal, -1 if installed < target
     """
-    if not installed or not target:
-        raise ValueError("Empty version string provided")
-    if str(installed).strip() == str(target).strip():
-        return 0
-    try:
-        def parse_tuple(v):
-            clean_str = str(v).strip().lstrip('vV')
-            nums = re.findall(r'\d+', clean_str)
-            return tuple(int(x) for x in nums)
-            
-        t_inst = parse_tuple(installed)
-        t_targ = parse_tuple(target)
-        
-        if t_inst and t_targ:
-            if t_inst > t_targ: return 1
-            elif t_inst == t_targ: return 0
-            else: return -1
-
-        def clean(v):
-            match = re.search(r'\d+(\.\d+)*', str(v))
-            return match.group(0) if match else "0"
-            
-        p_inst = parse_version(clean(installed))
-        p_targ = parse_version(clean(target))
-        
-        if p_inst > p_targ: return 1
-        elif p_inst == p_targ: return 0
-        else: return -1
-    except Exception as e:
-        logger.warning(f"Version comparison failed between {installed} and {target}: {e}")
-        if str(installed).strip() == str(target).strip(): return 0
-        raise ValueError(f"Could not compare {installed} and {target}")
+    from app.utils.version_utils import compare_canonical_versions
+    return compare_canonical_versions(installed, target)
 
 def version_decision(state: InstallationState) -> dict:
     job_id = state.get("job_id", "")
@@ -130,17 +100,72 @@ def version_decision(state: InstallationState) -> dict:
                 app["state"] = "INSTALL_REQUIRED"
                 continue
                 
+            from app.utils.version_utils import compare_canonical_versions
+            
+            canonical_inst_ver = app.get("canonical_installed_version") or inst_ver
+            
+            # Hard invariant check for UPDATE operation before allowing installation
+            if app.get("operation") == "UPDATE":
+                if not canonical_inst_ver or canonical_inst_ver == "UNKNOWN":
+                    broadcast_log(job_id, agent_name, f"[{app_name}] Update invariant failed: current installed version is unknown.", "error")
+                    app["status"] = "FAILED"
+                    app["failure_category"] = "VERSION_DETECTION_FAILED"
+                    continue
+                if not actual_target:
+                    broadcast_log(job_id, agent_name, f"[{app_name}] Update invariant failed: target version is unknown.", "error")
+                    app["status"] = "FAILED"
+                    app["failure_category"] = "VERSION_DISCOVERY_FAILED"
+                    continue
+
+                if app.get("is_up_to_date"):
+                    state_name = "NO_UPDATE_REQUIRED"
+                    application_states.setdefault(host_id, {})[app_name] = state_name
+                    broadcast_log(job_id, agent_name,
+                        f"[{app_name}] Host {host_id} confirmed up-to-date with authoritative latest {actual_target} (Installed: {canonical_inst_ver}). NO_UPDATE_REQUIRED.")
+                    broadcast_log(job_id, agent_name,
+                        f"[{app_name}] Version Decision Details:\n"
+                        f"  installed_version: {canonical_inst_ver}\n"
+                        f"  version_source: {app.get('version_source', 'None')}\n"
+                        f"  candidate_versions: {[actual_target]}\n"
+                        f"  rejected_candidates: []\n"
+                        f"  selected_latest_version: {actual_target}\n"
+                        f"  comparison_result: installed >= target\n"
+                        f"  decision: NO_UPDATE_REQUIRED"
+                    )
+                    continue
+
             try:
-                comparison = _compare_versions(inst_ver, actual_target)
+                comparison = compare_canonical_versions(canonical_inst_ver, actual_target)
                 if comparison == 0:
                     state_name = "NO_UPDATE_REQUIRED" if app.get("operation") == "UPDATE" else "ALREADY_TARGET_VERSION"
                     application_states.get(host_id, {})[app_name] = state_name
-                    broadcast_log(job_id, agent_name, f"[{app_name}] Host {host_id} already satisfies version {actual_target}. Skipping.")
+                    broadcast_log(job_id, agent_name, f"[{app_name}] Host {host_id} is already at target version {actual_target} (Installed: {canonical_inst_ver}). Skipping unnecessary update.")
+                    broadcast_log(job_id, agent_name,
+                        f"[{app_name}] Version Decision Details:\n"
+                        f"  installed_version: {canonical_inst_ver}\n"
+                        f"  version_source: {app.get('version_source', 'None')}\n"
+                        f"  candidate_versions: {[actual_target]}\n"
+                        f"  rejected_candidates: []\n"
+                        f"  selected_latest_version: {actual_target}\n"
+                        f"  comparison_result: installed == target\n"
+                        f"  decision: NO_UPDATE_REQUIRED"
+                    )
                 elif comparison > 0:
                     if app.get("operation") != "DOWNGRADE" or version_resolution_source in ("latest", "latest_fallback"):
                         application_states.get(host_id, {})[app_name] = "VERSION_DOWNGRADE_REQUIRES_EXPLICIT_REQUEST"
                         app["status"] = "AWAITING_USER_CLARIFICATION"
-                        broadcast_log(job_id, agent_name, f"[{app_name}] Host {host_id} has newer version {inst_ver} than target {actual_target}. Downgrade requires explicit request.", "error")
+                        app["failure_category"] = "VERSION_DOWNGRADE_REQUIRES_EXPLICIT_REQUEST"
+                        broadcast_log(job_id, agent_name, f"[{app_name}] Host {host_id} has newer version {canonical_inst_ver} than target {actual_target}. Downgrade requires explicit request.", "error")
+                        broadcast_log(job_id, agent_name,
+                            f"[{app_name}] Version Decision Details:\n"
+                            f"  installed_version: {canonical_inst_ver}\n"
+                            f"  version_source: {app.get('version_source', 'None')}\n"
+                            f"  candidate_versions: {[actual_target]}\n"
+                            f"  rejected_candidates: {[actual_target]}\n"
+                            f"  selected_latest_version: {actual_target}\n"
+                            f"  comparison_result: installed > target\n"
+                            f"  decision: VERSION_DOWNGRADE_REQUIRES_EXPLICIT_REQUEST"
+                        )
                         
                         # Create ApprovalRequest for User Clarification
                         try:
@@ -151,8 +176,7 @@ def version_decision(state: InstallationState) -> dict:
                             
                             db = SessionLocal()
                             try:
-                                # We need original requester's email and message ID
-                                original_requester = state.get("requester_email", "unknown@example.com")
+                                original_requester = state.get("requester_email") or ""
                                 email_message = state.get("email_message")
                                 original_message_id = email_message.get("message_id") if isinstance(email_message, dict) else None
                                 
@@ -164,7 +188,7 @@ def version_decision(state: InstallationState) -> dict:
                                     original_requester_email=original_requester,
                                     original_message_id=original_message_id,
                                     original_thread_id=original_message_id,
-                                    current_version=inst_ver,
+                                    current_version=canonical_inst_ver,
                                     target_version=actual_target,
                                     approval_reason="DOWNGRADE_REQUEST",
                                     status="PENDING",
@@ -175,7 +199,7 @@ def version_decision(state: InstallationState) -> dict:
                                 
                                 success, msg = EmailService.send_user_downgrade_request(
                                     application_name=app_name,
-                                    current_version=inst_ver,
+                                    current_version=canonical_inst_ver,
                                     target_version=actual_target,
                                     recipient_email=original_requester,
                                     original_message_id=original_message_id,
@@ -196,21 +220,25 @@ def version_decision(state: InstallationState) -> dict:
                             logger.error(f"Error creating downgrade approval request: {traceback.format_exc()}")
                     else:
                         application_states.get(host_id, {})[app_name] = "DOWNGRADE_REQUESTED"
-                        broadcast_log(job_id, agent_name, f"[{app_name}] Host {host_id} explicit downgrade requested (Installed: {inst_ver}, Target: {actual_target})")
+                        broadcast_log(job_id, agent_name, f"[{app_name}] Host {host_id} explicit downgrade requested (Installed: {canonical_inst_ver}, Target: {actual_target})")
                         if host_id not in hosts_requiring: hosts_requiring.append(host_id)
                         app["state"] = "INSTALL_REQUIRED"
                 else:
                     application_states.get(host_id, {})[app_name] = "OUTDATED"
-                    broadcast_log(job_id, agent_name, f"[{app_name}] Host {host_id} requires update (Installed: {inst_ver}, Target: {actual_target})")
+                    broadcast_log(job_id, agent_name, f"[{app_name}] Host {host_id} requires update (Installed: {canonical_inst_ver}, Target: {actual_target})")
                     if host_id not in hosts_requiring: hosts_requiring.append(host_id)
                     app["state"] = "INSTALL_REQUIRED"
             except ValueError as e:
                 broadcast_log(job_id, agent_name, f"[{app_name}] Version comparison unavailable for host {host_id}: {e}", "warning")
                 application_states.get(host_id, {})[app_name] = "VERSION_COMPARISON_UNAVAILABLE"
-                # Do not fail the app if we just can't compare versions - try to install/verify instead
-                if app.get("status") not in ["SUCCESS", "ALREADY_INSTALLED"]:
-                    if host_id not in hosts_requiring: hosts_requiring.append(host_id)
-                    app["state"] = "INSTALL_REQUIRED"
+                if app.get("operation") == "UPDATE":
+                    app["status"] = "FAILED"
+                    app["failure_category"] = "VERSION_COMPARISON_FAILED"
+                    broadcast_log(job_id, agent_name, f"[{app_name}] Version comparison failed for UPDATE. Blocking execution safely.", "error")
+                else:
+                    if app.get("status") not in ["SUCCESS", "ALREADY_INSTALLED"]:
+                        if host_id not in hosts_requiring: hosts_requiring.append(host_id)
+                        app["state"] = "INSTALL_REQUIRED"
                 
     if active_app and active_app.get("status") in ["FAILED", "AWAITING_USER_CLARIFICATION"]:
         broadcast_stage(job_id, agent_name, stage_name, "FAILED" if active_app.get("status") == "FAILED" else "BLOCKED")

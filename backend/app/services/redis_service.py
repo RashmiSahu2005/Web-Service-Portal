@@ -7,7 +7,7 @@ from app.core.logger import logger
 class RedisService:
     def __init__(self):
         try:
-            self.client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+            self.client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
             self.client.ping()
         except Exception as e:
             logger.error(f"Failed to connect to Redis: {e}")

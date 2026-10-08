@@ -190,12 +190,20 @@ export function useInstallationWS(jobId: string): UseInstallationWSReturn {
           });
           break;
 
-        case 'installation_complete':
-          setOverallStatus(data.status === 'SUCCESS' ? 'COMPLETED' : 'FAILED');
-          if (data.error) {
-            setError(data.error);
+        case 'installation_complete': {
+          const finalStatus = data.status;
+          if (finalStatus === 'SUCCESS' || finalStatus === 'COMPLETED') {
+            setOverallStatus('COMPLETED');
+          } else {
+            setOverallStatus('FAILED');
+            if (data.error) {
+              setError(data.error);
+            } else if (finalStatus === 'PARTIAL_SUCCESS') {
+              setError('Some applications succeeded but others failed.');
+            }
           }
           break;
+        }
 
         case 'status':
           // Legacy/fallback status structure

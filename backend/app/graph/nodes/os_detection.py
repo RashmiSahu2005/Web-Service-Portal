@@ -26,20 +26,11 @@ async def detect_os(state: InstallationState) -> dict:
         return {**updates, "status": "FAILED", "error_message": error_message}
         
     if not settings.USE_FLEETDM:
-        broadcast_log(job_id, agent_name, "FleetDM disabled. Mocking OS detection for all hosts.")
+        broadcast_log(job_id, agent_name, "FleetDM disabled. Using configured mock OS detection.")
+        os_name = settings.MOCK_HOST_OS
+        os_version = settings.MOCK_HOST_VERSION
+        arch = settings.MOCK_HOST_ARCH
         for host_id in host_ids:
-            if host_id == 1:
-                os_name, os_version, arch = "Ubuntu", "22.04 LTS", "amd64"
-            elif host_id == 2:
-                os_name, os_version, arch = "Ubuntu", "22.04 LTS", "arm64"
-            elif host_id == 3:
-                os_name, os_version, arch = "Windows", "11", "x64"
-            elif host_id == 4:
-                os_name, os_version, arch = "macOS", "14.4", "arm64"
-            elif host_id == 5:
-                os_name, os_version, arch = "Solaris", "11.4", "sparc"
-            else:
-                os_name, os_version, arch = "Ubuntu", "22.04 LTS", "amd64"
                 
             os_detail = {
                 "os": os_name,

@@ -34,7 +34,12 @@ def run_installation_job(self, job_id: str, **kwargs):
             
         # Initialize Graph and State
         graph = create_installation_graph()
-        host_ids = [job.host_id] if job.host_id and job.host_id != "dynamic" else [1] # Fallback
+        if job.host_id and job.host_id not in ("dynamic", "none", "null"):
+            host_ids = [job.host_id]
+        elif not settings.USE_FLEETDM:
+            host_ids = [settings.MOCK_HOST_ID]
+        else:
+            host_ids = []
         
         applications = kwargs.get("applications")
         if not applications:
@@ -61,10 +66,17 @@ def run_installation_job(self, job_id: str, **kwargs):
         # Execute Workflow
         logger.info(f"Starting LangGraph workflow for job {job_id}")
         start_time = time.time()
-        config = {"recursion_limit": 100}
+        config = {"recursion_limit": 300}
         asyncio.run(graph.ainvoke(initial_state, config))
         elapsed_time = time.time() - start_time
         logger.info(f"LangGraph workflow completed for job {job_id}. Overall time taken: {elapsed_time:.2f} seconds.")
+
+        job = db.query(InstallationJob).filter(InstallationJob.id == job_id).first()
+        if job and job.status not in ["CANCELLED"]:
+            from datetime import datetime
+            job.status = "COMPLETED"
+            job.completed_at = datetime.utcnow()
+            db.commit()
         
     except Exception as e:
         logger.error(f"Error executing installation job {job_id}: {e}", exc_info=True)
@@ -126,7 +138,7 @@ def resume_approved_update(self, approval_request_id: str):
 
         logger.info(f"Starting resume update workflow for approval {approval_request_id}")
         start_time = time.time()
-        config = {"recursion_limit": 100}
+        config = {"recursion_limit": 300}
         asyncio.run(graph.ainvoke(initial_state, config))
         elapsed_time = time.time() - start_time
         logger.info(f"Resume workflow completed in {elapsed_time:.2f} seconds.")

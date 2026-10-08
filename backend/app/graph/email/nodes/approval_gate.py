@@ -121,8 +121,8 @@ def check_approval_gate(state: EmailState) -> EmailState:
                         approval_repo.update(db, req)
                         return {**state, "status": "REJECTED", "error_message": "REQUESTER_NOT_AUTHORIZED"}
                 else:
-                    if reply_sender != settings.UPDATE_APPROVAL_ADMIN_EMAIL.lower():
-                        logger.warning(f"[EmailGraph] Ignoring approval from {reply_sender} - not the admin. Rejecting.")
+                    if reply_sender not in settings.ADMIN_APPROVAL_EMAILS:
+                        logger.warning(f"[EmailGraph] Ignoring approval from {reply_sender} - not an admin. Rejecting.")
                         req.status = "REJECTED"
                         approval_repo.update(db, req)
                         return {**state, "status": "REJECTED", "error_message": "REQUESTER_NOT_AUTHORIZED"}
