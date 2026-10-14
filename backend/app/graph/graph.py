@@ -286,7 +286,7 @@ def store_application_result(state: InstallationState) -> dict:
                                           "TARGET_VERSION_UNKNOWN"]:
         # Explicit failure categories must never silently convert to success
         app_status = "FAILED"
-    elif inst_status == "SUCCESS" and app.get("verification_status") in ["SUCCESS", "UNKNOWN"]:
+    elif (inst_status in ["SUCCESS", "SUCCESS_VERSION_MISMATCH", "ALREADY_INSTALLED"]) and app.get("verification_status") in ["SUCCESS", "UNKNOWN", "SUCCESS_VERSION_MISMATCH"]:
         app_status = "SUCCESS"
         
         # Cache the successful research strategy

@@ -382,13 +382,11 @@ async def check_application_state(state: InstallationState) -> dict:
                 # ── UPDATE-specific guardrails ────────────────────────────────────
                 if is_update:
                     if app_state == "APPLICATION_NOT_INSTALLED":
-                        _block_update(app, app_name, host_id, "APPLICATION_NOT_INSTALLED",
-                                      f"{app_name} is not installed on host {host_id}. Submit an installation request.",
-                                      state, job_id, agent_name, updates,
-                                      send_email=True)
-                        continue
-
-                    if app_state in ("VERSION_DETECTION_FAILED", "STATE_CHECK_FAILED"):
+                        app["update_fallback_to_install"] = True
+                        app["operation"] = "INSTALL"
+                        broadcast_log(job_id, agent_name, f"[{app_name}] was requested to UPDATE but is not installed on host {host_id}. Falling back to fresh INSTALL.", "info")
+                        # We intentionally do not 'continue' here so it falls through to the INSTALL path below.
+                    elif app_state in ("VERSION_DETECTION_FAILED", "STATE_CHECK_FAILED"):
                         _block_update(app, app_name, host_id, "VERSION_DETECTION_FAILED",
                                       detection_error or f"Unable to determine installed version of {app_name}. "
                                       f"All detection methods failed. Check PATH/binary on host {host_id}.",

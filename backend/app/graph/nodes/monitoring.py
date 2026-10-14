@@ -155,11 +155,12 @@ async def monitor_execution(state: InstallationState) -> dict:
                     
                 active_app_name = state.get("application_name")
                 if "DEPLOYIQ_RESULT_START" in output and "DEPLOYIQ_RESULT_END" in output:
-                    result_block = output.split("DEPLOYIQ_RESULT_START")[1].split("DEPLOYIQ_RESULT_END")[0].strip()
+                    result_block = output.split("DEPLOYIQ_RESULT_START")[-1].split("DEPLOYIQ_RESULT_END")[0].strip()
                     parsed_app_name = None
                     parsed_inst_status = "UNKNOWN"
                     parsed_verif_status = "UNKNOWN"
                     parsed_version = None
+                    parsed_failure_category = None
                     
                     for line in result_block.split("\n"):
                         if "=" in line:
@@ -174,6 +175,8 @@ async def monitor_execution(state: InstallationState) -> dict:
                                 parsed_verif_status = val.upper()
                             elif key == "INSTALLED_VERSION":
                                 parsed_version = val
+                            elif key == "DEPLOYIQ_FAILURE_CATEGORY":
+                                parsed_failure_category = val.strip()
 
                     if not parsed_app_name:
                         parsed_app_name = active_app_name
@@ -183,6 +186,27 @@ async def monitor_execution(state: InstallationState) -> dict:
                         this_app_name = app.get("name") or app.get("application_name")
                         if (app_matches(this_app_name, parsed_app_name) or len(applications) == 1) and app.get("state") == "INSTALL_REQUIRED":
                             matched_any = True
+
+                            is_general_install = app.get("operation") == "INSTALL"
+                            if parsed_failure_category == "VERSION_MISMATCH" and is_general_install:
+                                if not parsed_version:
+                                    import re
+                                    v_match = (
+                                        re.search(r'Setting up \S+ \(([0-9]+(?:\.[0-9]+)+[^)]*)\)', output) or
+                                        re.search(r'Unpacking \S+ \(([0-9]+(?:\.[0-9]+)+[^)]*)\)', output) or
+                                        re.search(r'INSTALLED_VERSION=([0-9]+(?:\.[0-9]+)+)', output) or
+                                        re.search(r'\b([0-9]+\.[0-9]+(?:\.[0-9]+)+)\b', output)
+                                    )
+                                    if v_match:
+                                        parsed_version = v_match.group(1).split("-")[0]
+                                logger.info(f"[Monitoring] Version mismatch for {this_app_name} during general INSTALL operation treated as SUCCESS_VERSION_MISMATCH (Installed: {parsed_version}).")
+                                parsed_inst_status = "SUCCESS"
+                                parsed_verif_status = "SUCCESS_VERSION_MISMATCH"
+                                if exec_id in failed_executions:
+                                    failed_executions.remove(exec_id)
+                            elif parsed_failure_category:
+                                app["failure_category"] = parsed_failure_category
+
                             app["installation_status"] = parsed_inst_status
                             app["verification_status"] = parsed_verif_status
                             if "pre_update_canonical_version" not in app:
@@ -198,6 +222,26 @@ async def monitor_execution(state: InstallationState) -> dict:
                         for app in applications:
                             this_app_name = app.get("name") or app.get("application_name")
                             if app_matches(this_app_name, active_app_name) and app.get("state") == "INSTALL_REQUIRED":
+                                is_general_install = app.get("operation") == "INSTALL"
+                                if parsed_failure_category == "VERSION_MISMATCH" and is_general_install:
+                                    if not parsed_version:
+                                        import re
+                                        v_match = (
+                                            re.search(r'Setting up \S+ \(([0-9]+(?:\.[0-9]+)+[^)]*)\)', output) or
+                                            re.search(r'Unpacking \S+ \(([0-9]+(?:\.[0-9]+)+[^)]*)\)', output) or
+                                            re.search(r'INSTALLED_VERSION=([0-9]+(?:\.[0-9]+)+)', output) or
+                                            re.search(r'\b([0-9]+\.[0-9]+(?:\.[0-9]+)+)\b', output)
+                                        )
+                                        if v_match:
+                                            parsed_version = v_match.group(1).split("-")[0]
+                                    logger.info(f"[Monitoring] Version mismatch for {this_app_name} during general INSTALL operation treated as SUCCESS_VERSION_MISMATCH (Installed: {parsed_version}).")
+                                    parsed_inst_status = "SUCCESS"
+                                    parsed_verif_status = "SUCCESS_VERSION_MISMATCH"
+                                    if exec_id in failed_executions:
+                                        failed_executions.remove(exec_id)
+                                elif parsed_failure_category:
+                                    app["failure_category"] = parsed_failure_category
+
                                 app["installation_status"] = parsed_inst_status
                                 app["verification_status"] = parsed_verif_status
                                 if "pre_update_canonical_version" not in app:
@@ -264,17 +308,18 @@ async def monitor_execution(state: InstallationState) -> dict:
                 broadcast_log(job_id, agent_name, f"[{active_app_name}] Post-update verification SUCCESS: detected version {post_installed_ver} on host (Target: {target_ver}, Previous: {canonical_before}).")
             else:
                 if active_app.get("operation") == "INSTALL":
-                    # For fresh installs, if we detected ANY version, it was successfully installed (even if it's an older repo version)
+                    # For fresh installs, if we detected ANY version, it was successfully installed (even if it's an older/different repo version)
                     active_app["verification_status"] = "SUCCESS_VERSION_MISMATCH"
                     active_app["status"] = "SUCCESS"
+                    active_app["installation_status"] = "SUCCESS"
                     broadcast_log(job_id, agent_name, f"[{active_app_name}] Installation SUCCESS, but version mismatch: installed {post_installed_ver} vs target {target_ver}.", "warning")
                 else:
                     active_app["verification_status"] = "FAILED"
                     active_app["status"] = "UPDATE_VERIFICATION_FAILED"
                     broadcast_log(job_id, agent_name, f"[{active_app_name}] Post-update verification FAILED: installed version {post_installed_ver} did not reach target {target_ver} (Previous: {canonical_before}).", "error")
-        elif active_app.get("verification_status") == "SUCCESS" and active_app.get("installation_status") == "SUCCESS":
+        elif active_app.get("verification_status") in ["SUCCESS", "SUCCESS_VERSION_MISMATCH"] and active_app.get("installation_status") in ["SUCCESS", "SUCCESS_VERSION_MISMATCH"]:
             active_app["status"] = "UPDATE_SUCCESS" if active_app.get("operation") == "UPDATE" else "SUCCESS"
-            if target_ver:
+            if target_ver and not active_app.get("installed_version"):
                 active_app["installed_version"] = target_ver
                 active_app["canonical_installed_version"] = target_ver
             broadcast_log(job_id, agent_name, f"[{active_app_name}] Post-execution verification SUCCESS via script verification.")
@@ -283,10 +328,30 @@ async def monitor_execution(state: InstallationState) -> dict:
             active_app["status"] = "UPDATE_VERIFICATION_FAILED"
             broadcast_log(job_id, agent_name, f"[{active_app_name}] Post-update verification FAILED: installed version after update could not be verified.", "error")
 
-    # Determine overall status - prioritize installation success over verification failure
+    # Determine overall status - verification failure means the deployment failed
+    def is_app_success(a):
+        if a.get("status") in ["UPDATE_VERIFICATION_FAILED", "FAILED", "FAILURE"]:
+            return False
+        if a.get("verification_status") in ["FAILED", "FAILURE"]:
+            return False
+        return (
+            a.get("installation_status") in ["SUCCESS", "ALREADY_INSTALLED", "SUCCESS_VERSION_MISMATCH"]
+            or a.get("verification_status") in ["SUCCESS", "SUCCESS_VERSION_MISMATCH"]
+            or a.get("status") in ["SUCCESS", "UPDATE_SUCCESS", "ALREADY_INSTALLED"]
+        )
+
+    def is_app_failed(a):
+        if a.get("verification_status") == "SUCCESS_VERSION_MISMATCH" or a.get("status") in ["SUCCESS", "UPDATE_SUCCESS", "ALREADY_INSTALLED"]:
+            return False
+        if a.get("status") in ["UPDATE_VERIFICATION_FAILED", "FAILED", "FAILURE"]:
+            return True
+        if a.get("verification_status") in ["FAILED", "FAILURE"]:
+            return True
+        return a.get("installation_status") in ["FAILED", "FAILURE"]
+
     install_required_apps = [a for a in applications if a.get("state") == "INSTALL_REQUIRED"]
-    success_count = sum(1 for a in install_required_apps if a.get("installation_status") in ["SUCCESS", "ALREADY_INSTALLED"])
-    failed_count = sum(1 for a in install_required_apps if a.get("installation_status") in ["FAILED", "FAILURE"] or (a.get("verification_status") in ["FAILED", "FAILURE"] and a.get("installation_status") not in ["SUCCESS", "ALREADY_INSTALLED"]))
+    success_count = sum(1 for a in install_required_apps if is_app_success(a))
+    failed_count = sum(1 for a in install_required_apps if is_app_failed(a))
     
     has_timeout = any(r.get("host_timeout") for r in updates["execution_results"].values())
     

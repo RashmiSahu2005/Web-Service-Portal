@@ -40,24 +40,25 @@ class IMAPClient:
         try:
             self.mail.select(mailbox)
             
-            # Fetch ALL email IDs sorted oldest→newest
+            # Fetch ALL email IDs to find the highest sequence numbers
             status, messages = self.mail.search(None, 'ALL')
-            if status != 'OK':
-                logger.error(f"IMAPClient: Search failed with status {status}")
-                return []
-            all_ids = set(messages[0].split())
             
-            # Take the N most recent by sequence number
-            max_emails = settings.IMAP_MAX_EMAILS
+            if status != 'OK' or not messages[0]:
+                return []
+                
             all_id_list = messages[0].split()
+            
+            # Fetch the most recent N emails regardless of read status
+            # (Captures emails the admin might have manually read on their phone)
+            max_emails = settings.IMAP_MAX_EMAILS
             recent_ids = set(all_id_list[-max_emails:] if len(all_id_list) > max_emails else all_id_list)
             
-            # Also fetch any UNSEEN (unread) emails — these may be approval replies
-            # that are outside the recent window
+            # Also fetch ANY UNSEEN (unread) emails
+            # (Captures bulk spikes of > N emails that arrived together)
             status_unseen, unseen_msgs = self.mail.search(None, 'UNSEEN')
-            unseen_ids = set(unseen_msgs[0].split()) if status_unseen == 'OK' else set()
+            unseen_ids = set(unseen_msgs[0].split()) if (status_unseen == 'OK' and unseen_msgs[0]) else set()
             
-            # Union: recent + unseen — never miss a new reply
+            # Union: recent + unseen (Never miss a reply, never miss a bulk spike)
             email_ids_to_fetch = list(recent_ids | unseen_ids)
             
             fetched_emails = []

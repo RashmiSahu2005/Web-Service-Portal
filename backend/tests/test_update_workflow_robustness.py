@@ -51,8 +51,9 @@ def test_c_brave_not_installed():
         mock_check.return_value = {"brave-browser": {"installed_raw": None, "latest_raw": None, "exit_code": 0}}
         res = asyncio.run(check_application_state(state))
         app = res["applications"][0]
-        assert app["status"] == "FAILED"
-        assert app["failure_category"] == "APPLICATION_NOT_INSTALLED"
+        assert app.get("update_fallback_to_install") is True
+        assert app.get("operation") == "INSTALL"
+        assert 191 in res["hosts_requiring_installation"]
 
 # TEST D: State detection command fails
 def test_d_state_detection_command_fails():

@@ -29,6 +29,17 @@ def process_email(client: IMAPClient, email_id: bytes, msg):
         client.mark_as_read(email_id)
         return
         
+    # Ignore emails sent by DeployIQ itself to prevent infinite loops.
+    # If the email has a bot subject but is NOT a reply (doesn't start with Re: or Fwd:), drop it.
+    subject_lower = subject.lower().strip()
+    is_reply = subject_lower.startswith("re:") or subject_lower.startswith("fwd:") or subject_lower.startswith("aw:") or subject_lower.startswith("wg:")
+    
+    if not is_reply:
+        if subject_lower.startswith("deployiq -") or subject_lower.startswith("action required:"):
+            logger.info(f"[EmailListener] Ignoring bot's own auto-generated email (Subject: {subject})")
+            client.mark_as_read(email_id)
+            return
+            
     logger.info(f"[EmailListener] Processing email event from: {sender} (Message-ID: {message_id})")
     
     from app.graph.email.graph import create_email_intake_graph
@@ -47,9 +58,9 @@ def process_email(client: IMAPClient, email_id: bytes, msg):
         "updated_at": datetime.utcnow().isoformat()
     }
     
-    # Avoid duplicate processing of the same exact message_id (if IMAP gives it to us again)
+    # Avoid duplicate processing of the same exact message_id
     if redis_client.get(f"email_processed:{message_id}"):
-        logger.info(f"[EmailListener] Email {message_id} already processed. Skipping.")
+        logger.debug(f"[EmailListener] Email {message_id} already processed. Skipping.")
         return
         
     redis_client.set(f"email_processed:{message_id}", "true", ex=86400 * 7) # Keep duplicate protection for 7 days

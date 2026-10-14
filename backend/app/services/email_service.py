@@ -143,7 +143,8 @@ DeployIQ"""
         summary_text: str,
         overall_status: str,
         timestamp: str,
-        hostname: str = None
+        hostname: str = None,
+        in_reply_to: str = None
     ):
         if not settings.SMTP_ENABLED:
             msg = "SMTP is disabled in configuration. Skipping email."
@@ -176,6 +177,9 @@ DeployIQ"""
         msg['From'] = settings.SMTP_SENDER_EMAIL
         msg['To'] = recipient_email
         msg['Subject'] = subject
+        if in_reply_to:
+            msg['In-Reply-To'] = in_reply_to
+            msg['References'] = in_reply_to
         msg.attach(MIMEText(body, 'plain'))
         
         try:
@@ -210,7 +214,8 @@ DeployIQ"""
         original_message_id: str,
         approval_id: str
     ):
-        recipient_emails = settings.ADMIN_APPROVAL_EMAILS
+        # Recipients: approvers who should respond, not the admin notification list.
+        recipient_emails = settings.APPROVAL_REQUEST_EMAILS or settings.ADMIN_APPROVAL_EMAILS
         if not settings.SMTP_ENABLED:
             logger.info("SMTP disabled, skipping approval email.")
             return True, "SMTP disabled"
@@ -531,3 +536,123 @@ DeployIQ Update Approval - Approval ID: {approval_id}
         except Exception as e:
             logger.error(f"EmailService: Host Not Found email failed: {e}")
             return (False, str(e))
+
+    @staticmethod
+    def send_initial_approval_request(
+        application_name: str,
+        hostname: str,
+        original_requester_email: str,
+        incident_id: str
+    ):
+        # Recipients: approvers who should respond, not the admin notification list.
+        recipient_emails = settings.APPROVAL_REQUEST_EMAILS or settings.ADMIN_APPROVAL_EMAILS
+        if not settings.SMTP_ENABLED:
+            logger.info("SMTP disabled, skipping initial approval email.")
+            return True, "SMTP disabled"
+
+        subject = f"ACTION REQUIRED: Approval for DeployIQ Installation - {application_name} on {hostname} [{incident_id}]"
+        
+        body = f"""DeployIQ received a new installation/update request that requires administrative approval.
+
+Application: {application_name}
+Target Host: {hostname}
+Original Requester: {original_requester_email}
+
+Incident ID: {incident_id}
+
+To approve this request, reply to this email with the word "APPROVED" or "INSTALL".
+To reject this request, reply with the word "REJECTED" or "NO".
+
+No changes will be performed unless an approval is received.
+"""
+
+        msg = MIMEMultipart()
+        msg['From'] = settings.SMTP_SENDER_EMAIL
+        msg['To'] = ", ".join(recipient_emails)
+        msg['Subject'] = subject
+        
+        import email.utils
+        admin_message_id = email.utils.make_msgid(domain="deployiq.local")
+        msg['Message-ID'] = admin_message_id
+
+        msg.attach(MIMEText(body, 'plain'))
+        
+        try:
+            server = smtplib.SMTP(settings.SMTP_SERVER, settings.SMTP_PORT)
+            try:
+                server.starttls()
+            except Exception:
+                pass
+            if settings.SMTP_USERNAME and settings.SMTP_PASSWORD:
+                server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+            server.sendmail(settings.SMTP_SENDER_EMAIL, recipient_emails, msg.as_string())
+            server.quit()
+            logger.info(f"EmailService: Initial Approval Email Sent for {incident_id}")
+            return (True, admin_message_id)
+        except Exception as e:
+            logger.error(f"EmailService: Initial Approval Email Failed: {e}")
+            return (False, str(e))
+
+    @staticmethod
+    def send_approval_notification_to_admin(
+        application_name: str,
+        hostname: str,
+        incident_id: str,
+        approved_by: str,
+        admin_message_id: str,
+        intent: str = "APPROVED"
+    ):
+        """
+        Notify the configured admin mailboxes that an approval reply has been received.
+        Sent as a threaded reply (In-Reply-To / References) to the original approval request email
+        so the conversation stays in one thread.
+        The sender remains the configured SMTP_SENDER_EMAIL -- we never spoof the approver address.
+        """
+        admin_emails = settings.ADMIN_APPROVAL_EMAILS
+        if not admin_emails:
+            logger.info("EmailService: No ADMIN_APPROVAL_EMAILS configured. Skipping admin notification.")
+            return (True, "No admin emails")
+        if not settings.SMTP_ENABLED:
+            logger.info("SMTP disabled, skipping admin notification.")
+            return (True, "SMTP disabled")
+
+        verb = "APPROVED" if intent == "APPROVED" else "REJECTED"
+        subject = f"DeployIQ - Approval {verb}: {application_name} on {hostname} [{incident_id}]"
+        body = (
+            f"An authorized approver has {verb.lower()} the installation/update request.\n\n"
+            f"Application: {application_name}\n"
+            f"Host: {hostname}\n"
+            f"Incident ID: {incident_id}\n"
+            f"Decision by: {approved_by}\n"
+            f"Decision: {verb}\n\n"
+            f"DeployIQ will {'proceed with the job' if verb == 'APPROVED' else 'take no further action'}.\n"
+        )
+
+        import email.utils as _eu
+        msg = MIMEMultipart()
+        msg['From'] = settings.SMTP_SENDER_EMAIL
+        msg['To'] = ", ".join(admin_emails)
+        msg['Subject'] = subject
+        new_mid = _eu.make_msgid(domain="deployiq.local")
+        msg['Message-ID'] = new_mid
+        if admin_message_id:
+            msg['In-Reply-To'] = admin_message_id
+            msg['References'] = admin_message_id
+        msg.attach(MIMEText(body, 'plain'))
+
+        try:
+            server = smtplib.SMTP(settings.SMTP_SERVER, settings.SMTP_PORT)
+            try:
+                server.starttls()
+            except Exception:
+                pass
+            if settings.SMTP_USERNAME and settings.SMTP_PASSWORD:
+                server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+            server.sendmail(settings.SMTP_SENDER_EMAIL, admin_emails, msg.as_string())
+            server.quit()
+            logger.info(f"EmailService: Admin approval notification sent for incident {incident_id}")
+            return (True, new_mid)
+        except Exception as e:
+            logger.error(f"EmailService: Admin approval notification failed: {e}")
+            return (False, str(e))
+

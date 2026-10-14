@@ -12,8 +12,8 @@ def _send_email(state: InstallationState, job_id: str, agent_name: str) -> bool:
     
     applications = state.get("applications", [])
     
-    success_count = sum(1 for a in applications if a.get("status") in ["SUCCESS", "ALREADY_INSTALLED", "NO_UPDATE_REQUIRED"])
-    failed_count = sum(1 for a in applications if a.get("status") not in ["SUCCESS", "ALREADY_INSTALLED", "NO_UPDATE_REQUIRED"])
+    success_count = sum(1 for a in applications if a.get("status") in ["SUCCESS", "ALREADY_INSTALLED", "NO_UPDATE_REQUIRED", "UPDATE_SUCCESS"])
+    failed_count = sum(1 for a in applications if a.get("status") not in ["SUCCESS", "ALREADY_INSTALLED", "NO_UPDATE_REQUIRED", "UPDATE_SUCCESS"])
     
     if failed_count > 0 and success_count == 0:
         overall_status = "FAILED"
@@ -21,16 +21,30 @@ def _send_email(state: InstallationState, job_id: str, agent_name: str) -> bool:
         overall_status = "PARTIAL_SUCCESS"
     else:
         overall_status = "SUCCESS"
-
-    if overall_status != "SUCCESS":
-        broadcast_log(job_id, agent_name, f"Overall status is {overall_status} (not SUCCESS). Suppressing notification email.", "info")
-        return False
         
     summary_lines = []
     for a in applications:
         app_name = a.get("name") or a.get("application_name")
         status_val = a.get("status", "FAILED")
-        summary_lines.append(f"{app_name:<20} - {status_val}")
+        
+        notes = []
+        if a.get("update_fallback_to_install"):
+            notes.append("Note: App was not installed, performed fresh installation of latest version")
+        if a.get("verification_status") == "SUCCESS_VERSION_MISMATCH":
+            inst_v = a.get("installed_version") or a.get("post_update_version") or "installed"
+            target_v = a.get("target_version") or "latest"
+            notes.append(f"Installed version: {inst_v} (target was {target_v})")
+            
+        if status_val not in ["SUCCESS", "ALREADY_INSTALLED", "NO_UPDATE_REQUIRED", "UPDATE_SUCCESS"]:
+            reason = a.get("failure_reason") or a.get("error_message") or a.get("failure_category")
+            if not reason and a.get("verification_status") in ["FAILED", "FAILURE"]:
+                reason = "Post-installation verification failed"
+            if not reason:
+                reason = state.get("error_message") or "Installation script exited with error"
+            notes.append(f"Reason: {reason}")
+            
+        note_str = f" ({'; '.join(notes)})" if notes else ""
+        summary_lines.append(f"{app_name:<20} - {status_val}{note_str}")
         
     summary_text = "\n".join(summary_lines)
     
@@ -44,12 +58,14 @@ def _send_email(state: InstallationState, job_id: str, agent_name: str) -> bool:
         broadcast_log(job_id, agent_name, "No requester_email found in state! Cannot send notification.", "error")
         return False
         
+    in_reply_to = state.get("message_id") or state.get("in_reply_to")
     success, msg = EmailService.send_multi_app_report(
         recipient_email=recipient_email,
         summary_text=summary_text,
         overall_status=overall_status,
         timestamp=timestamp,
-        hostname=hostnames
+        hostname=hostnames,
+        in_reply_to=in_reply_to
     )
     
     if success:

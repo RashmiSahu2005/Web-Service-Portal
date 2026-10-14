@@ -184,19 +184,20 @@ or installation commands that are not supported by the evidence.
 CRITICAL REQUIREMENT: 
 What is the most reliable deterministic way to install this application on this exact OS and architecture?
 The search priority should generally be:
-1. Official OS repository/package manager
-2. Official vendor repository (must include EXACT setup commands)
-3. Official Snap/Flatpak
-4. Official direct artifact
+1. Official OS repository/package manager (ONLY IF the OS repository actually contains the requested target version or newer)
+2. Official direct vendor artifact / tarball / binary (e.g. Apache tarball or vendor archive when OS repos have an outdated version)
+3. Official vendor repository (must include EXACT setup commands)
+4. Official Snap/Flatpak
 5. Other documented deterministic installation mechanism
 6. Manual/private artifact only when genuinely required
 
-Do NOT select snap simply because a Snap package exists. Ensure it respects host constraints.
+CRITICAL VERSION COMPATIBILITY: If a specific target version is requested (e.g. "{version}"), you MUST choose the installation method that actually delivers that version! If the evidence shows that the target version is distributed as an official tarball/binary (e.g. .tgz or .tar.gz) from the vendor, recommend "official_tarball" or "binary_download" with the exact download URL or installation commands, rather than an OS package manager that only carries an old or different version.
 
 APPLICATION: {application}
 VERSION: {version}
 OS: {os_name}
 ARCHITECTURE: {architecture}
+CRITICAL OS CONSTRAINT: The target OS is strictly {os_name} ({architecture}). Do NOT return Windows paths (e.g. C:\...) or commands if the OS is Linux/Ubuntu/macOS. Only return paths, packages, and commands appropriate for {os_name}.
 {update_section}
 {constraints_section}
 {failure_section}
@@ -216,7 +217,10 @@ CRITICAL URL RULES:
 - You must NEVER invent, guess, or construct an artifact URL, CDN hostname, repository URL, or GPG key URL.
 - Only set `artifact_url` and `artifact_url_verified=true` if an EXACT direct download link is explicitly present in the evidence.
 - If the application requires an artifact (e.g., `official_deb`) but no deterministic public artifact URL is found in the evidence, set `artifact_required = true` and do NOT invent a URL.
-- For official vendor repositories, you MUST provide the exact, documented GPG key URL and repository list string. DO NOT guess or infer these.
+CRITICAL METHOD DISTINCTION:
+- If the application is available in the target OS package manager (e.g. `apt install -y <package>` on Ubuntu/Debian), you MUST set "recommended_method": "apt", "package_manager": "apt", and "package_name": "<package>". Do NOT use "official_deb" for packages installed from the OS repository!
+- Use "official_deb" ONLY when the software is downloaded directly as a standalone `.deb` file URL from the vendor (e.g. `https://.../foo.deb`).
+- Use "official_tarball" or "tarball" when downloaded as a `.tar.gz`, `.tgz`, or `.zip` file from the vendor.
 
 {{
   "application_name": "{application}",
@@ -224,7 +228,7 @@ CRITICAL URL RULES:
   "architecture": "{architecture}",
   "latest_version": "string or UNKNOWN",
   "version_source_url": "string or null",
-  "recommended_method": "official_deb, official_tarball, apt, snap, etc",
+  "recommended_method": "apt (for OS package), official_deb (only if direct .deb URL exists), official_tarball, snap, etc",
   "installation_command": "string or null",
   "download_url": "string or null",
   "artifact_url": "string or null",
@@ -344,7 +348,8 @@ class InstallationResearchService:
                 application_name=application,
                 os_name=os_name,
                 architecture=architecture,
-                failure_context=failure_str
+                failure_context=failure_str,
+                version=version
             )
             if tavily_evidence and len(tavily_evidence) > 50:
                 evidence = tavily_evidence
@@ -427,6 +432,19 @@ class InstallationResearchService:
             # Actionable evidence is checked in installation_research_validation.py, not here based on confidence.
             strategy.research_status = "RESEARCH_SUCCESS"
             
+            if strategy.recommended_method and strategy.recommended_method.lower() == "official_deb" and not strategy.artifact_url:
+                if strategy.package_manager == "apt" or (strategy.installation_command and "apt" in strategy.installation_command) or strategy.package_name:
+                    logger.info("[DeployIQ][InstallationResearch] Correcting method from 'official_deb' to 'apt' (standard repo package without direct deb URL)")
+                    strategy.recommended_method = "apt"
+                    strategy.package_manager = "apt"
+
+            if strategy.recommended_method and strategy.recommended_method.lower() in ["apt", "official_deb"]:
+                if strategy.verification_command and ("gpg --verify" in strategy.verification_command or ".tgz" in strategy.verification_command or ".tar" in strategy.verification_command):
+                    pkg = strategy.package_name or application.lower().replace(" ", "-")
+                    strategy.verification_method = "dpkg_query"
+                    strategy.verification_command = f"dpkg-query -l '{pkg}'"
+                    logger.info(f"[DeployIQ][InstallationResearch] Sanitized tarball verification command for APT package: {strategy.verification_command}")
+
             if not strategy.recommended_method or strategy.recommended_method.lower() == "unknown":
                 strategy.recommended_method = "unknown"
                 strategy.research_status = "RESEARCH_INSUFFICIENT"
@@ -444,12 +462,18 @@ class InstallationResearchService:
                 elif method in ["rpm", "yum", "dnf"]:
                     strategy.verification_method = "rpm_query"
                     strategy.verification_command = f"rpm -q {pkg}"
-                elif exe:
+                is_win_path = bool(exe and (re.match(r'^[a-zA-Z]:[\\/]', exe) or exe.endswith(('.bat', '.cmd', '.exe'))))
+                if exe and ((os_name.lower() == "windows" and is_win_path) or (os_name.lower() != "windows" and not is_win_path)):
                     strategy.verification_method = "file_exists"
-                    strategy.verification_command = f"test -f '{exe}'"
+                    strategy.verification_command = f"test -f '{exe}'" if os_name.lower() != "windows" else f"Test-Path '{exe}'"
                 else:
-                    strategy.verification_method = "command_exists"
-                    strategy.verification_command = f"command -v {application.lower().replace(' ', '-')}"
+                    cmd_name = application.lower().replace(' ', '-')
+                    if os_name.lower() == "windows":
+                        strategy.verification_method = "command_exists"
+                        strategy.verification_command = f"Get-Command {cmd_name} -ErrorAction SilentlyContinue"
+                    else:
+                        strategy.verification_method = "command_exists"
+                        strategy.verification_command = f"command -v {cmd_name}"
                 logger.info(f"[DeployIQ][InstallationResearch] Synthesized verification: {strategy.verification_method} → {strategy.verification_command}")
                 
         except Exception as e:

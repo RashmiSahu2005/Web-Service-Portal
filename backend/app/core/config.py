@@ -9,6 +9,22 @@ def _parse_cors_origins(raw: str) -> list:
     """Parse a comma-separated CORS origins string into a list."""
     return [origin.strip() for origin in raw.split(",") if origin.strip()]
 
+def _parse_email_list(raw: str, var_name: str) -> list:
+    """Parse a comma-separated email list: trim whitespace, drop empty entries, deduplicate case-insensitively."""
+    seen = set()
+    result = []
+    for addr in raw.split(","):
+        addr = addr.strip().lower()
+        if addr and addr not in seen:
+            if "@" not in addr:
+                raise ValueError(
+                    f"Configuration error: {var_name} contains an invalid email address '{addr}'. "
+                    "All entries must be valid email addresses."
+                )
+            seen.add(addr)
+            result.append(addr)
+    return result
+
 class Settings:
     PROJECT_NAME: str = "DeployIQ MVP"
     API_V1_STR: str = ""
@@ -43,9 +59,22 @@ class Settings:
     LLM_MODEL: str = os.getenv("LLM_MODEL", "")
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", os.getenv("OLLAMA_URL", "http://localhost:11434"))
 
-    ADMIN_APPROVAL_EMAILS: list = [e.strip().lower() for e in os.getenv("ADMIN_APPROVAL_EMAIL", os.getenv("UPDATE_APPROVAL_ADMIN_EMAIL", "")).split(",") if e.strip()]
-    # Keep legacy string for backward compatibility where a single string is expected
+    # UPDATE_APPROVAL_ADMIN_EMAIL — admin mailboxes that receive notifications/alerts.
+    # Legacy env var ADMIN_APPROVAL_EMAIL is still accepted as a fallback.
+    ADMIN_APPROVAL_EMAILS: list = _parse_email_list(
+        os.getenv("UPDATE_APPROVAL_ADMIN_EMAIL", os.getenv("ADMIN_APPROVAL_EMAIL", "")),
+        "UPDATE_APPROVAL_ADMIN_EMAIL"
+    )
+    # Keep legacy single-string attribute for any code that reads it directly
     ADMIN_APPROVAL_EMAIL: str = ADMIN_APPROVAL_EMAILS[0] if ADMIN_APPROVAL_EMAILS else ""
+
+    # UPDATE_APPROVAL_REQUEST_EMAIL — approver mailboxes that receive the approval-request email.
+    # These are the people who can reply APPROVED/REJECTED.
+    # Separate from ADMIN_APPROVAL_EMAILS: do not use one as a fallback for the other.
+    APPROVAL_REQUEST_EMAILS: list = _parse_email_list(
+        os.getenv("UPDATE_APPROVAL_REQUEST_EMAIL", ""),
+        "UPDATE_APPROVAL_REQUEST_EMAIL"
+    )
 
 
     # Tavily (used only by tavily_service.py for version discovery — not for installation research)

@@ -25,6 +25,7 @@ class EmailState(TypedDict, total=False):
     target_host_ip: Optional[str]
     host_id: Optional[str]
     ticket_id: Optional[str]
+    incident_id: Optional[str]
     
     # Lifecycle Status
     # RECEIVED, PENDING_APPROVAL, APPROVED, REJECTED, INVALID, COMPLETED, FAILED

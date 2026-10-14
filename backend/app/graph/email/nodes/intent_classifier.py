@@ -58,7 +58,8 @@ def classify_intent(state: EmailState) -> EmailState:
 Email Content:
 {combined_text}
 
-CRITICAL RULE: If the email is a REPLY (starts with "Re:", or contains words like "Approved", "Yes", "go ahead") to a previous thread, it is NOT a new request. Return an empty applications list.
+CRITICAL RULE 1: If the email is a REPLY (starts with "Re:", or contains words like "Approved", "Yes", "go ahead") to a previous thread, it is NOT a new request. Return an empty applications list.
+CRITICAL RULE 2: If the email is a general conversation, out-of-office reply, leave intimation, or DOES NOT EXPLICITLY ask to install, update, or deploy software, YOU MUST return an empty array for applications. Do NOT hallucinate application names.
 
 Return ONLY a valid JSON object with exactly these two top-level keys. Do not nest target_host_ip inside applications.
 
@@ -112,7 +113,8 @@ Rules:
             if not isinstance(app, dict):
                 continue  # Skip stray non-object elements
             app_name = (app.get("name") or "").strip()
-            if app_name and not (app_name.lower().startswith("in ") or app_name.lower().startswith("on ")):
+            # Ignore hallucinated "DeployIQ" apps and invalid prefixes
+            if app_name and app_name.lower() != "deployiq" and not (app_name.lower().startswith("in ") or app_name.lower().startswith("on ")):
                 op = app.get("operation", "INSTALL").upper()
                 if op not in ["INSTALL", "UPDATE", "DOWNGRADE"]:
                     op = "INSTALL"

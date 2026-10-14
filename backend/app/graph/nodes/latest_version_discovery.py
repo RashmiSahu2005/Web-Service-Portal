@@ -27,7 +27,9 @@ def latest_version_discovery(state: InstallationState) -> dict:
     applications = state.get("applications", [])
     os_groups = state.get("os_groups", {})
     first_os = list(os_groups.keys())[0] if os_groups else "unknown_unknown"
-    os_name, architecture = first_os.split("_") if "_" in first_os else (first_os, "unknown")
+    first_os_parts = first_os.split("_") if "_" in first_os else [first_os, "unknown"]
+    os_name = first_os_parts[0]
+    architecture = first_os_parts[-1] if len(first_os_parts) > 1 else "unknown"
 
     broadcast_stage(job_id, agent_name, stage_name, "RUNNING")
 

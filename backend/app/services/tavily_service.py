@@ -108,18 +108,14 @@ class TavilyService:
         return ""
 
     @classmethod
-    def get_detailed_installation_evidence(cls, application_name: str, os_name: str, architecture: str, failure_context: str = "") -> str:
+    def get_detailed_installation_evidence(cls, application_name: str, os_name: str, architecture: str, failure_context: str = "", version: str = "") -> str:
         """
         Uses Tavily to search for detailed installation facts specifically tailored for script generation.
         """
-        query = (
-            f"Find the official installation method for {application_name} compatible with {os_name} ({architecture} architecture). "
-            "Determine latest stable version, official download URL, Linux package format, "
-            "installation procedure, required dependencies, installation path, executable path, "
-            "non-GUI verification method, and official version/download source."
-        )
+        ver_clause = f"{version} " if version and version.lower() not in ("latest", "unknown", "") else ""
+        query = f"{application_name} {ver_clause}official installation download package repository documentation {os_name} {architecture}".strip()
         if failure_context:
-            query += f" Note previous failures: {failure_context}. Recommend alternative methods if possible."
+            query += f" alternative methods {failure_context}"
             
         result = search_tavily(query, search_depth="advanced")
 

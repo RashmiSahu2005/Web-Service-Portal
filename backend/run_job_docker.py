@@ -14,8 +14,8 @@ def run():
     
     job = InstallationJob(
         id=job_id,
-        application_id="ef680b24-a385-49c7-8b3d-94667524778c",
-        host_id="24",
+        application_id="0d9c58f7-f6e5-4660-8afb-66f51c490245",
+        host_id="192",
         status="PENDING"
     )
     db.add(job)
@@ -27,7 +27,7 @@ def run():
     
     task_id = QueueService.enqueue_installation(
         job_id=job_id,
-        host_ids=[24],
+        host_ids=[192],
         applications=applications,
         requester_email="rashmi.sahu@ap2l.ai"
     )

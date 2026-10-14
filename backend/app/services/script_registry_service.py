@@ -164,8 +164,10 @@ class ScriptRegistryService:
             )
             if script:
                 return script
+            logger.info(f"[ScriptResolver] No compatible script in registry matching exact version {version}.")
+            return None
 
-        # Step 2: latest-version fallback (used when version='latest' or exact not found)
+        # Step 2: latest-version fallback (used when version='latest' or falsy)
         logger.info(f"[ScriptResolver] Falling back to latest-version lookup...")
         return ScriptRegistryService.find_latest_compatible_script(
             application_name, operating_system, architecture

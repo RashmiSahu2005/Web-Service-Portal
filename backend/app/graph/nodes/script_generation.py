@@ -38,10 +38,23 @@ def _build_prompt(state: InstallationState, sig: str, script_type: str = ".sh", 
     arch = parts[-1]
     
     app_name = state.get("application_name")
+    operation = state.get("operation") or "INSTALL"
     target_version = state.get("target_version", "latest")
     strategy = state.get("strategies", {}).get(sig, {}).get(app_name)
 
-    app_info = f"Target: {app_name} (Version: {target_version})\n"
+    is_explicit_version = any(
+        a.get("is_explicit_version") for a in state.get("applications", [])
+        if a.get("name") == app_name or a.get("application_name") == app_name
+    )
+    if operation == "INSTALL" and not is_explicit_version:
+        app_info = (
+            f"Target: {app_name} (Operation: INSTALL - Target Version: {target_version})\n"
+            f"NOTE: This is a general installation request (no pinned version requested). "
+            f"Any latest stable package provided by the repository is acceptable. "
+            f"Do NOT check for an exact fixed version string in post-installation verification.\n"
+        )
+    else:
+        app_info = f"Target: {app_name} (Operation: {operation}, Target Version: {target_version})\n"
     if strategy:
         pkg_mgr = strategy.get("package_manager") or ""
         if pkg_mgr:
@@ -114,22 +127,23 @@ You must install:
 
 Constraints:
 1. Non-interactive (no prompts). Use DEBIAN_FRONTEND=noninteractive for apt.
-2. Idempotent: Exit 0 if already installed and version matches.
+2. Idempotent: Exit 0 ONLY if the requested target version is ALREADY installed and matches. If an older or different version is installed, do NOT fail or exit 1 with VERSION_MISMATCH; proceed to install/upgrade to the requested target version.
 3. Exit non-zero on installation failure.
 4. No sudo (assume running as root).
-5. Prefer official package repositories. Avoid deprecated apt-key; use signed-by keyring.
-6. Print progress to stdout.
-7. CRITICAL APT HANDLING: Do NOT use a blanket `apt-get update -y || true` and do NOT swallow network failures.
+5. DO NOT use `set -e`. Using `set -e` causes premature exit and breaks manual exit code handling (like `UPDATE_EXIT=$?`). Use `set -o pipefail` only if needed.
+6. Prefer official package repositories. Avoid deprecated apt-key; use signed-by keyring.
+7. Print progress to stdout.
+8. CRITICAL APT HANDLING: Do NOT use a blanket `apt-get update -y || true` and do NOT swallow network failures.
    - First, check if the package is already available using `apt-cache policy <package>`. If a valid candidate exists, skip `apt-get update` to avoid unrelated repository errors.
    - If you MUST run `apt-get update`, capture the exit code and output (e.g. `apt-get update >"/var/tmp/apt_update.log" 2>&1; UPDATE_EXIT=$?`).
    - If it fails due to a network/DNS error, you MUST exit 1 and report `DEPLOYIQ_FAILURE_CATEGORY=NETWORK_FAILURE` or `DNS_FAILURE`.
    - If it fails due to an unrelated broken third-party GPG repository (e.g., NO_PUBKEY), do not fail the installation if the target package can still be installed.
-8. CRITICAL SAFETY: NEVER remove the old installation before validating the new one!
+9. CRITICAL SAFETY: NEVER remove the old installation before validating the new one!
    - Detect current version.
    - Download new package (if applicable).
    - Validate download (e.g. `test -s`, `tar -tzf`, `dpkg-deb --info`, `rpm -qip`).
    - CRITICAL NOEXEC AND PERMISSION AVOIDANCE: Use `/var/tmp` or `/opt` for temporary files and downloads. Do NOT use `/tmp`.
-9. DIRECT DEB INSTALLATION RULES (if strategy uses a direct download):
+10. DIRECT DEB INSTALLATION RULES (if strategy uses a direct download):
    - Download the exact artifact.
    - Verify it's a valid deb.
    - Use `dpkg-deb -f "$PACKAGE" Depends` to extract dependencies.
@@ -137,33 +151,44 @@ Constraints:
    - Validate that each dependency package actually exists for the target Ubuntu version/architecture before attempting to install it (e.g., using `apt-cache show`).
    - Install only the valid dependencies that are missing.
    - Install the .deb package.
-10. TARBALL INSTALLATION RULES (if strategy uses a tarball):
+11. TARBALL INSTALLATION RULES (if strategy uses a tarball):
    - Download, validate integrity, and extract to a controlled directory (e.g., `/opt/`).
    - Verify expected files exist and create symlinks if needed.
-11. VERIFICATION: Installation and verification MUST remain in the SAME generated script. At the end of the script, run the explicit Verification Command provided (or a safe alternative if none provided). Exit 0 ONLY if verification succeeds.
-12. UNIFIED RESULT OUTPUT: Any exit must print a structured DeployIQ result.
+12. VERIFICATION: Installation and verification MUST remain in the SAME generated script. At the end of the script, run the explicit Verification Command provided (or a safe alternative if none provided). Exit 0 ONLY if verification succeeds.
+13. UNIFIED RESULT OUTPUT: Any exit must print a structured DeployIQ result using echo statements:
+    - IMPORTANT: Output DEPLOYIQ_RESULT_START ONLY ONCE, at the very end of script execution. Do NOT echo it prematurely or inside function preambles.
     If success (both installation and verification succeeded):
-    DEPLOYIQ_RESULT_START
-    APPLICATION={app_name}
-    INSTALLATION_STATUS=SUCCESS
-    VERIFICATION_STATUS=SUCCESS
-    INSTALLED_VERSION=<actual version>  # On Debian/Ubuntu prefer: dpkg-query -W -f='${{Version}}\n' <package> 2>/dev/null || <binary> --version --no-sandbox
-    DEPLOYIQ_RESULT_END
+    echo "DEPLOYIQ_RESULT_START"
+    echo "APPLICATION={app_name}"
+    echo "INSTALLATION_STATUS=SUCCESS"
+    echo "VERIFICATION_STATUS=SUCCESS"
+    echo "INSTALLED_VERSION=<actual version>"  # On Debian/Ubuntu prefer: dpkg-query -W -f='${{Version}}\n' <package> 2>/dev/null || <binary> --version --no-sandbox
+    echo "DEPLOYIQ_RESULT_END"
     exit 0
 
     If failure (any step failed):
-    DEPLOYIQ_RESULT_START
-    APPLICATION={app_name}
-    INSTALLATION_STATUS=FAILED
-    DEPLOYIQ_FAILURE_CATEGORY=<category>
-    DEPLOYIQ_RESULT_END
+    echo "DEPLOYIQ_RESULT_START"
+    echo "APPLICATION={app_name}"
+    echo "INSTALLATION_STATUS=FAILED"
+    echo "DEPLOYIQ_FAILURE_CATEGORY=<category>"
+    echo "DEPLOYIQ_RESULT_END"
     exit 1
-    
     Valid Failure Categories: NETWORK_FAILURE, DNS_FAILURE, APT_REPOSITORY_FAILURE, APT_GPG_FAILURE, PACKAGE_NOT_FOUND, DEPENDENCY_FAILURE, PACKAGE_MANAGER_FAILURE, DOWNLOAD_FAILURE, VERSION_MISMATCH, PERMISSION_FAILURE, EXECUTION_TIMEOUT, VERIFICATION_FAILURE, SCRIPT_ERROR, ARTIFACT_REQUIRED.
-13. PRIVATE PORTAL / MANUAL ARTIFACT: If the installation strategy indicates that the application requires a private vendor portal or manual download, DO NOT invent URLs. You MUST immediately exit 1 and output DEPLOYIQ_FAILURE_CATEGORY=ARTIFACT_REQUIRED.
-14. EXACT STRATEGY ONLY: You MUST use the exact repository, download URL, artifact URL, and installation command provided. Do NOT invent URLs or package names.
+14. PRIVATE PORTAL / MANUAL ARTIFACT: If the installation strategy indicates that the application requires a private vendor portal or manual download, DO NOT invent URLs. You MUST immediately exit 1 and output DEPLOYIQ_FAILURE_CATEGORY=ARTIFACT_REQUIRED.
+15. EXACT STRATEGY ONLY: You MUST use the exact repository, download URL, artifact URL, and installation command provided. Do NOT invent URLs or package names.
     - CRITICAL URL RULE: NEVER construct a URL from a filename, guess a CDN hostname, or convert a generic download page into a package URL. Use ONLY the explicit URLs provided. If you cannot fulfill a direct artifact installation without guessing an unknown URL, you must write a script that echoes 'FATAL: Missing deterministic URL' and exits 1 with DEPLOYIQ_FAILURE_CATEGORY=ARTIFACT_REQUIRED.
     - REPOSITORY RULE: Never invent repository URLs or GPG key URLs. If a custom repository is required but exact URLs were not provided in the research, exit 1 with DEPLOYIQ_FAILURE_CATEGORY=APT_REPOSITORY_FAILURE.
+16. OPERATION CONTEXT & VERSION CHECK RULES:
+    - For general INSTALLATION operations (Operation='INSTALL'): The goal is to install the application. If the package or binary installs and is runnable, any version provided by the repository is SUCCESSFUL. Do NOT perform strict version equality checks (like `grep -q '^{target_version}$'`) in your post-install check. If the package is installed, print:
+        echo "DEPLOYIQ_RESULT_START"
+        echo "APPLICATION={app_name}"
+        echo "INSTALLATION_STATUS=SUCCESS"
+        echo "VERIFICATION_STATUS=SUCCESS"
+        echo "INSTALLED_VERSION=<actual version>"
+        echo "DEPLOYIQ_RESULT_END"
+        exit 0
+    - NEVER call DEPLOYIQ_FAILURE VERSION_MISMATCH or exit 1 on general INSTALL operations when the application was successfully installed.
+    - For UPDATE operations (Operation='UPDATE') where a specific target version is requested: Verify that the target version is reached or that the version has been upgraded beyond the previous version. If the specific target version was not reached, exit 1 with `DEPLOYIQ_FAILURE_CATEGORY=VERSION_MISMATCH`.
 """
     elif script_type == ".ps1":
         prompt = f"""Generate a robust, idempotent PowerShell (.ps1) installation script for {os_name} ({arch}).
@@ -329,6 +354,15 @@ def _extract_and_validate_script(raw_response: str, job_id: str, agent_name: str
         # Strip any shebangs if the LLM included one anyway
         if script.startswith("#!"):
             script = "\n".join(script.splitlines()[1:]).strip()
+        # Sanitize bare DEPLOYIQ_RESULT_START / END tokens if LLM forgot 'echo'
+        cleaned_lines = []
+        for line in script.splitlines():
+            stripped = line.strip()
+            if stripped in ("DEPLOYIQ_RESULT_START", "DEPLOYIQ_RESULT_END"):
+                cleaned_lines.append(f'echo "{stripped}"')
+            else:
+                cleaned_lines.append(line)
+        script = "\n".join(cleaned_lines)
         broadcast_log(job_id, agent_name, "Bash script accepted (shebang stripped if present to avoid noexec bug).")
     elif script_type == ".ps1":
         broadcast_log(job_id, agent_name, "PowerShell script accepted (no syntax pre-check applied).")

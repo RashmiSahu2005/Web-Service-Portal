@@ -374,9 +374,13 @@ class GenericApplicationProvider(BaseApplicationProvider):
                     candidates.insert(0, "firefox")
                     candidates.append("firefox-esr")
             elif "docker" in tokens:
-                for d in ("docker-desktop", "docker-ce", "docker.io", "docker"):
-                    if d not in candidates:
-                        candidates.append(d)
+                if "compose" in tokens:
+                    if "docker-compose-plugin" not in candidates:
+                        candidates.insert(0, "docker-compose-plugin")
+                else:
+                    for d in ("docker-desktop", "docker-ce", "docker.io", "docker"):
+                        if d not in candidates:
+                            candidates.append(d)
         elif "win" in os_name.lower():
             candidates.append("".join(tokens))
             candidates.append(norm)
